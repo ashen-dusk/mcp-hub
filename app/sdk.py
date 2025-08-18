@@ -4,9 +4,9 @@ from app.agent import graph as search_agent
 sdk = CopilotKitRemoteEndpoint(
     agents=lambda context: [
         LangGraphAgent(
-            name="medi_aid",
+            name="search_agent",
             description=(
-                "This agent is used to search realtime information using the web search tool"
+                "This agent is used to search realtime information using the web search tool."
             ),
             graph=search_agent,
         )

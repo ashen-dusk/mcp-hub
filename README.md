@@ -23,7 +23,17 @@ A Django application that integrates CopilotKit with LangGraph agents for AI-pow
    cd assistant
    ```
 
-2. **Activate your virtual environment:**
+2. **Create your virtual environment:**
+   ```bash
+   # Windows
+   py -m venv env
+   # Windows (if you have more than one python version installed, create virtual environment using specific verion)
+   py -3.12 -m venv env
+   
+   # macOS/Linux
+   source env/bin/activate
+   ```
+3. **Activate your virtual environment:**
    ```bash
    # Windows
    env\Scripts\activate
@@ -32,12 +42,12 @@ A Django application that integrates CopilotKit with LangGraph agents for AI-pow
    source env/bin/activate
    ```
 
-3. **Install dependencies:**
+4. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Set up environment variables:**
+5. **Set up environment variables:**
    
    
    **Create a .env file:**
@@ -50,12 +60,12 @@ A Django application that integrates CopilotKit with LangGraph agents for AI-pow
    SECRET_KEY=your_django_secret_key
    ```
 
-5. **Run database migrations (Optional):**
+6. **Run database migrations (Optional):**
    ```bash
    python manage.py migrate
    ```
 
-6. **Start the server:**
+7. **Start the server:**
    ```bash
    uvicorn assistant.asgi:application --reload
    ```
