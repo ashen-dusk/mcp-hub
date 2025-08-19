@@ -1,3 +1,15 @@
 from django.contrib import admin
+from .models import MCPServer
 
-# Register your models here.
+
+@admin.register(MCPServer)
+class MCPServerAdmin(admin.ModelAdmin):
+    list_display = ("name", "transport", "enabled", "created_at", "updated_at")
+    list_filter = ("transport", "enabled")
+    search_fields = ("name", "url", "command")
+    readonly_fields = ("created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("name", "transport", "enabled")}),
+        ("Connection", {"fields": ("url", "command", "args_json")}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
