@@ -14,6 +14,7 @@ from langgraph.graph import END
 from langgraph.types import Command
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
+from .mcp_manager import mcp_manager
 
 # define tools
 @tool
@@ -33,16 +34,18 @@ def search_web(query: str) -> str:
     search = TavilySearch(max_results=3)
     return search.invoke(query)
 
-def get_tools():
-    return [get_current_datetime, search_web]
+async def get_tools():
+    tools = [get_current_datetime]
+    tools.extend(await mcp_manager.aget_langchain_tools())
+    print(f"DEBUG: get_tools: {tools}")
+    return tools
     
 # ------------------------------------------------------------
 # chat node
 
 async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
-    
-    tools = get_tools()
+    tools = await get_tools()
 
     llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
         

@@ -11,8 +11,8 @@ from .types import MCPServerType
 @strawberry.type
 class Query:
     @strawberry.field
-    def mcp_servers(self, info: Info) -> List[MCPServerType]:
-        rows = mcp_manager.list_servers()
+    async def mcp_servers(self, info: Info) -> List[MCPServerType]:
+        rows = await mcp_manager.alist_servers()
         result: List[MCPServerType] = []
         for r in rows:
             result.append(
@@ -30,7 +30,7 @@ class Query:
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    def add_mcp_server(
+    async def add_mcp_server(
         self,
         info: Info,
         name: str,
@@ -39,7 +39,7 @@ class Mutation:
         command: Optional[str] = None,
         args_json: Optional[str] = None,
     ) -> MCPServerType:
-        rec = mcp_manager.add_server(
+        rec = await mcp_manager.aadd_server(
             name=name,
             transport=transport,
             url=url,
@@ -55,8 +55,8 @@ class Mutation:
         )
 
     @strawberry.mutation
-    def remove_mcp_server(self, info: Info, name: str) -> bool:
-        return mcp_manager.remove_server(name)
+    async def remove_mcp_server(self, info: Info, name: str) -> bool:
+        return await mcp_manager.aremove_server(name)
 
 
 schema = strawberry.Schema(Query, Mutation)

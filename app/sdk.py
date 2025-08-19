@@ -1,5 +1,5 @@
 from copilotkit import CopilotKitRemoteEndpoint, LangGraphAgent
-from app.agent import graph as search_agent
+from app.agent import graph
 
 sdk = CopilotKitRemoteEndpoint(
     agents=lambda context: [
@@ -8,7 +8,7 @@ sdk = CopilotKitRemoteEndpoint(
             description=(
                 "This agent is used to search realtime information using the web search tool."
             ),
-            graph=search_agent,
+            graph=graph,
         )
     ],
 )
