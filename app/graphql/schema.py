@@ -1,7 +1,7 @@
 import strawberry
 
 # Import the Query and Mutation classes from your feature-specific schema files
-from app.mcp.schema import Query as MCPQuery, Mutation as MCPMutation
+from app.mcp.mcp_schema import Query as MCPQuery, Mutation as MCPMutation
 
 
 @strawberry.type

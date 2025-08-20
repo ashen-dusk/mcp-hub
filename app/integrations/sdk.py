@@ -1,5 +1,5 @@
 from copilotkit import CopilotKitRemoteEndpoint, LangGraphAgent
-from app.agent import graph
+from app.agent.agent import graph
 
 sdk = CopilotKitRemoteEndpoint(
     agents=lambda context: [
