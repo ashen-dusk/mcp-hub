@@ -9,13 +9,13 @@ from langchain_core.runnables import RunnableConfig
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 
-from app.schema import AgentState
-from app.model import get_llm
+from app.agent.types import AgentState
+from app.agent.model import get_llm
 from langgraph.graph import END
 from langgraph.types import Command
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
-from .mcp_manager import mcp
+from app.mcp.manager import mcp
 
 @tool
 def get_current_datetime() -> str:

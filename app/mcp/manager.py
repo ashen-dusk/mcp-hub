@@ -30,7 +30,7 @@ class MCP:
     async def alist_servers(self) -> List[MCPServer]:
         return [s async for s in MCPServer.objects.all().order_by("name")]
 
-    async def aadd_server(
+    async def asave_server(
         self,
         name: str,
         transport: str,
@@ -58,12 +58,22 @@ class MCP:
     async def aremove_server(self, name: str) -> bool:
         try:
             rec = await MCPServer.objects.aget(name=name)
+            await rec.adelete()
+            await self.initialize_client()  # re-initialize on change
+            return True
         except MCPServer.DoesNotExist:
             return False
-        rec.enabled = False
+
+    async def aet_server_enabled(self, name: str, enabled: bool) -> MCPServer:
+        try:
+            rec = await MCPServer.objects.aget(name=name)
+        except MCPServer.DoesNotExist:
+            raise ValueError(f"MCPServer with name '{name}' not found.")
+
+        rec.enabled = enabled
         await rec.asave(update_fields=["enabled", "updated_at"])
         await self.initialize_client()  # re-initialize on change
-        return True
+        return rec
 
     async def _build_adapter_map(self) -> Dict[str, Dict[str, Any]]:
         adapter_map: Dict[str, Dict[str, Any]] = {}

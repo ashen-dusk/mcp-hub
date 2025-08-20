@@ -3,9 +3,9 @@ from typing import List, Optional
 import strawberry
 from strawberry.types import Info
 
-from .mcp_manager import mcp
-from .models import MCPServer
-from .types import MCPServerType
+from app.mcp.manager import mcp
+from app.mcp.models import MCPServer
+from app.mcp.types import MCPServerType
 
 
 @strawberry.type
@@ -22,7 +22,6 @@ class Query:
                     url=r.url,
                     command=r.command,
                     args_json=r.args_json,
-                    health="UNKNOWN",  # default health status
                 )
             )
         return result
@@ -35,7 +34,7 @@ class Query:
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    async def add_mcp_server(
+    async def save_mcp_server(
         self,
         info: Info,
         name: str,
@@ -46,7 +45,7 @@ class Mutation:
         headers_json: Optional[str] = None,
         query_params_json: Optional[str] = None,
     ) -> MCPServerType:
-        rec = await mcp.aadd_server(
+        rec = await mcp.asave_server(
             name=name,
             transport=transport,
             url=url,
@@ -67,7 +66,15 @@ class Mutation:
     async def remove_mcp_server(self, info: Info, name: str) -> bool:
         return await mcp.aremove_server(name)
 
-
-schema = strawberry.Schema(Query, Mutation)
-
-
+    @strawberry.mutation
+    async def set_mcp_server_enabled(
+        self, info: Info, name: str, enabled: bool
+    ) -> MCPServerType:
+        rec = await mcp.aet_server_enabled(name=name, enabled=enabled)
+        return MCPServerType(
+            name=rec.name,
+            transport=rec.transport,
+            url=rec.url,
+            command=rec.command,
+            args_json=rec.args_json,
+        )

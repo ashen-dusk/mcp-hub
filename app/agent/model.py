@@ -7,7 +7,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 
-from app.schema import AgentState
+from app.agent.types import AgentState
 
 
 def get_llm(state: AgentState) -> BaseChatModel:
