@@ -6,7 +6,6 @@ import inspect
 from typing import List, Optional, Any, cast
 
 from django.http import JsonResponse, StreamingHttpResponse
-from django.views.decorators.csrf import csrf_exempt
 from copilotkit.types import Message, MetaEvent
 from copilotkit import CopilotKitRemoteEndpoint, CopilotKitContext
 from copilotkit.exc import (
@@ -36,8 +35,6 @@ def body_get_or_raise(body: Any, key: str):
         return JsonResponse({"error": f"{key} is required"}, status=400)
     return value
 
-
-@csrf_exempt
 async def copilotkit_handler(request, path=""):
     try:
         body = json.loads(request.body.decode()) if request.body else {}
@@ -99,7 +96,6 @@ async def copilotkit_handler(request, path=""):
         return result_v1
 
     return JsonResponse({"error": "Not found"}, status=404)
-
 
 async def handler_v1(
         sdk: CopilotKitRemoteEndpoint,

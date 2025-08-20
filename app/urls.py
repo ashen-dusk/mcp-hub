@@ -6,7 +6,11 @@ from strawberry.django.views import AsyncGraphQLView
 from .graphql import schema
 
 urlpatterns = [
-    path("copilotkit/<path:path>", copilotkit_handler, name="copilotkit-path"),
+    path(
+        "copilotkit/<path:path>", 
+        csrf_exempt(copilotkit_handler), 
+        name="copilotkit-path"
+    ),
     path(
         "graphql",
         csrf_exempt(AsyncGraphQLView.as_view(schema=schema, graphiql=getattr(settings, "DEBUG", False))),

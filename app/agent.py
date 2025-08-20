@@ -2,9 +2,6 @@
 Simple tool-calling agent for testing with Tavily search and datetime tools.
 """
 
-from datetime import datetime
-from langchain_core.messages import SystemMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -13,6 +10,7 @@ from app.schema import AgentState
 from app.chat import chat_node, get_tools
 from langgraph.prebuilt import tools_condition
 from langgraph.prebuilt import ToolNode
+
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
     tools = await get_tools()

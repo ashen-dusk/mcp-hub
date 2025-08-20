@@ -19,6 +19,8 @@ class MCPServer(models.Model):
     url = models.TextField(blank=True, null=True)
     command = models.TextField(blank=True, null=True)
     args_json = models.TextField(blank=True, null=True)
+    headers_json = models.TextField(blank=True, null=True)
+    query_params_json = models.TextField(blank=True, null=True)
     enabled = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
