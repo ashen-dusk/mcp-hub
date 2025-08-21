@@ -109,6 +109,12 @@ class MCP:
         try:
             rec = await MCPServer.objects.aget(name=name)
             await rec.adelete()
+            # Ensure any live connection tracking is cleared
+            if name in self.connected_servers:
+                try:
+                    del self.connected_servers[name]
+                except Exception:
+                    pass
             await self.initialize_client()  # re-initialize on change
             return True
         except MCPServer.DoesNotExist:
@@ -122,12 +128,22 @@ class MCP:
 
         rec.enabled = enabled
         await rec.asave(update_fields=["enabled", "updated_at"])
+        # If disabling, clear connection tracking for this server
+        if not enabled and name in self.connected_servers:
+            try:
+                del self.connected_servers[name]
+            except Exception:
+                pass
         await self.initialize_client()  # re-initialize on change
         return rec
 
-    async def _build_adapter_map(self) -> Dict[str, Dict[str, Any]]:
+    async def _build_adapter_map(self, names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         adapter_map: Dict[str, Dict[str, Any]] = {}
-        async for rec in MCPServer.objects.filter(enabled=True).all():
+        # Only build configs for explicitly provided names (connected servers)
+        if not names:
+            return adapter_map
+        qs = MCPServer.objects.filter(enabled=True, name__in=list(names))
+        async for rec in qs.all():
             logging.debug(f"Building adapter map for: name={rec.name} transport={rec.transport}")
             if rec.transport == "stdio":
                 args = _safe_json_loads(rec.args_json) or []
@@ -163,26 +179,13 @@ class MCP:
                     headers = _safe_json_loads(rec.headers_json)
                     if isinstance(headers, dict) and headers:
                         entry["headers"] = headers
-                # add default Accept header for SSE
-                if rec.transport == MCPServer.TRANSPORT_SSE:
-                    headers = entry.get("headers", {})
-                    if "Accept" not in headers:
-                        headers["Accept"] = "text/event-stream"
-                    entry["headers"] = headers
-                    
-                    # check if this is Tavily server and handle differently
-                    if "tavily.com" in base_url:
-                        # tavily might need different transport or headers
-                        logging.info(f"Detected Tavily server, using streamable_http transport instead of SSE")
-                        entry["transport"] = "streamable_http"
-                        # remove SSE-specific headers
-                        if "Accept" in headers:
-                            del headers["Accept"]
                 adapter_map[rec.name] = entry
         return adapter_map
 
     async def initialize_client(self):
-        self.adapter_map = await self._build_adapter_map()
+        # Restrict adapter map to only explicitly connected servers
+        connected_names = list(self.connected_servers.keys())
+        self.adapter_map = await self._build_adapter_map(names=connected_names)
         if not self.adapter_map:
             self.client = None
             self.tools = []
@@ -222,13 +225,10 @@ class MCP:
             return "DISABLED", []
 
         try:
-            adapter_map = await self._build_adapter_map()
+            adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
                 return "ERROR", []
-
-            server_config = {name: adapter_map[name]}
-            client = MultiServerMCPClient(server_config)
-            tools = await asyncio.wait_for(client.get_tools(), timeout=5.0)
+            tools = await asyncio.wait_for(self.client.get_tools(), timeout=5.0)
             # Convert tools to serializable format
             tools_info = self._serialize_tools(tools)
 
@@ -253,13 +253,8 @@ class MCP:
             if not server.enabled:
                 return False, "Server is disabled", []
             
-            # check server health first
-            health_status, _ = await self.acheck_server_health(name)
-            if health_status != "OK":
-                return False, f"Server health check failed: {health_status}", []
-            
             # build adapter map for this specific server
-            adapter_map = await self._build_adapter_map()
+            adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
                 return False, "Server configuration not found", []
             
@@ -280,6 +275,9 @@ class MCP:
             
             # Convert tools to serializable format
             tools_info = self._serialize_tools(tools)
+            
+            # rebuild the shared client to include this server
+            await self.initialize_client()
             
             return True, "Connected successfully", tools_info
             
@@ -306,22 +304,30 @@ class MCP:
             # get the client and close it if it has a close method
             server_info = self.connected_servers[name]
             client = server_info.get("client")
-            
+            # print(f"Client: {client}")
+            print(f"Client type: {dir(client)}")
             if hasattr(client, 'close'):
                 try:
+                    logging.info(f"Closing client for {name}")
+                    print(f"Closing client for {name}")
                     await client.close()
                 except Exception as e:
                     logging.warning(f"Error closing client for {name}: {e}")
-            
-            # remove from connected servers
-
-            # also remove from adapter map if present (runtime disconnect)
+       
+            # remove from adapter map if present (runtime disconnect)
             if name in self.adapter_map:
                 try:
-                    del self.connected_servers[name]
                     del self.adapter_map[name]
                 except Exception:
                     pass
+
+            # always remove from connected tracking and rebuild client
+            try:
+                del self.connected_servers[name]
+            except Exception:
+                pass
+
+            await self.initialize_client()
             
             return True, "Disconnected successfully"
             
