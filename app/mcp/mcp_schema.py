@@ -14,13 +14,15 @@ from app.mcp.types import (
 )
 
 @strawberry.type
+# ── graphql: query ───────────────────────────────────────────────────────────
 class Query:
     @strawberry.field
+    # .. field: mcp_servers
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
         rows = await mcp.alist_servers()
         result: List[MCPServerType] = []
         for r in rows:
-            # convert tools to ToolInfo objects
+            # :: convert tools to ToolInfo objects
             tool_info_list = []
             for tool in r.tools:
                 tool_info_list.append(
@@ -48,6 +50,7 @@ class Query:
         return result
 
     @strawberry.field
+    # .. field: mcp_server_health
     async def mcp_server_health(self, info: Info, name: str) -> ServerHealthInfo:
         status, tools = await mcp.acheck_server_health(name)
         tool_info_list = [
@@ -60,8 +63,10 @@ class Query:
 
 
 @strawberry.type
+# ── graphql: mutation ────────────────────────────────────────────────────────
 class Mutation:
     @strawberry.mutation
+    # .. mutation: save_mcp_server
     async def save_mcp_server(
         self,
         info: Info,
@@ -96,10 +101,12 @@ class Mutation:
         )
 
     @strawberry.mutation
+    # .. mutation: remove_mcp_server
     async def remove_mcp_server(self, info: Info, name: str) -> bool:
         return await mcp.aremove_server(name)
 
     @strawberry.mutation
+    # .. mutation: set_mcp_server_enabled
     async def set_mcp_server_enabled(
         self, info: Info, name: str, enabled: bool
     ) -> MCPServerType:
@@ -118,14 +125,14 @@ class Mutation:
         )
 
     @strawberry.mutation
+    # .. mutation: connect_mcp_server
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
         success, message, tools = await mcp.connect_server(name)
-        print(f"Success: {success}, Message: {message}, Tools: {tools}")
         tool_info_list = [
             ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
         ]
         
-        # determine connection status and message
+        # :: determine connection status and message
         if success:
             connection_status = "CONNECTED"
             final_message = f"Successfully connected to {name}"
@@ -142,9 +149,29 @@ class Mutation:
         )
 
     @strawberry.mutation
+    # .. mutation: disconnect_mcp_server
     async def disconnect_mcp_server(self, info: Info, name: str) -> DisconnectResult:
         success, message = await mcp.disconnect_server(name)
         return DisconnectResult(
             success=success,
             message=message,
+        )
+
+    @strawberry.mutation
+    # .. mutation: restart_mcp_server
+    async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
+        status, tools = await mcp.acheck_server_health(name)
+        tool_info_list = [
+            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
+        ]
+        connection_status = "CONNECTED" if status == "OK" else "FAILED"
+        final_message = (
+            f"Successfully restarted {name}" if status == "OK" else f"restart failed: {status}"
+        )
+        return ConnectionResult(
+            success=(status == "OK"),
+            message=final_message,
+            tools=tool_info_list,
+            server_name=name,
+            connection_status=connection_status,
         )

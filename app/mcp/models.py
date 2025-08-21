@@ -1,6 +1,6 @@
 from django.db import models
 
-
+# ── django: model ─────────────────────────────────────────────────────────────
 class MCPServer(models.Model):
     TRANSPORT_STDIO = "stdio"
     TRANSPORT_STREAMABLE_HTTP = "streamable_http"

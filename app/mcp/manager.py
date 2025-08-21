@@ -37,7 +37,7 @@ def _safe_json_dumps(obj: Any) -> str:
         logging.warning(f"Failed to serialize object to JSON: {e}")
         return "{}"
 
-
+# ── mcp: manager ─────────────────────────────────────────────────────────────
 class MCP:
     def __init__(self):
         self.client: Optional[MultiServerMCPClient] = None
@@ -205,6 +205,7 @@ class MCP:
             self.client = None
             self.tools = []
 
+    # .. op: acheck_server_health
     async def acheck_server_health(self, name: str) -> tuple[str, list[dict[str, Any]]]:
         """
         Check server health and return tools if healthy.
@@ -238,6 +239,7 @@ class MCP:
             logging.warning(f"Health check for {name} failed: {e}")
             return "ERROR", []  
 
+    # .. op: connect_server
     async def connect_server(self, name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """
         Connect to a specific MCP server and return connection status and tools.
@@ -289,6 +291,7 @@ class MCP:
             logging.exception(f"Failed to connect to server {name}: {e}")
             return False, f"Connection failed: {str(e)}", []
 
+    # .. op: disconnect_server
     async def disconnect_server(self, name: str) -> Tuple[bool, str]:
         """
         Disconnect from a specific MCP server.
@@ -311,17 +314,20 @@ class MCP:
                     logging.warning(f"Error closing client for {name}: {e}")
             
             # remove from connected servers
-            del self.connected_servers[name]
+
+            # also remove from adapter map if present (runtime disconnect)
+            if name in self.adapter_map:
+                try:
+                    del self.connected_servers[name]
+                    del self.adapter_map[name]
+                except Exception:
+                    pass
             
             return True, "Disconnected successfully"
             
         except Exception as e:
             logging.exception(f"Failed to disconnect from server {name}: {e}")
             return False, f"Disconnect failed: {str(e)}"
-
-
-
-
 
     def get_client(self) -> Optional[MultiServerMCPClient]:
         return self.client
