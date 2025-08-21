@@ -4,9 +4,9 @@ from app.agent.agent import graph
 sdk = CopilotKitRemoteEndpoint(
     agents=lambda context: [
         LangGraphAgent(
-            name="medi_aid",
+            name="mcp-assistant",
             description=(
-                "This agent is used to search realtime information using the web search tool."
+                "This agent is used to answer questions and perform tasks using the MCP servers."
             ),
             graph=graph,
         ),
