@@ -2,7 +2,7 @@ from django.db import models
 import uuid
 import shortuuid
 
-# ── django: model ─────────────────────────────────────────────────────────────
+# ── MCPServer: model ─────────────────────────────────────────────────────────────
 class MCPServer(models.Model):
     TRANSPORT_STDIO = "stdio"
     TRANSPORT_STREAMABLE_HTTP = "streamable_http"
@@ -28,18 +28,20 @@ class MCPServer(models.Model):
     transport = models.CharField(max_length=32, choices=TRANSPORT_CHOICES)
     url = models.TextField(blank=True, null=True)
     command = models.TextField(blank=True, null=True)
-    args_json = models.TextField(blank=True, null=True)
-    headers_json = models.TextField(blank=True, null=True)
-    query_params_json = models.TextField(blank=True, null=True)
-    enabled = models.BooleanField(default=True)
+    
+    # json fields
+    args = models.JSONField(default=dict, blank=True)
+    headers = models.JSONField(default=dict, blank=True)
+    query_params = models.JSONField(default=dict, blank=True)
+    tools = models.JSONField(default=list, blank=True)
 
     # ── django: connection status fields ───────────────────────────────────────
+    enabled = models.BooleanField(default=True)
     connection_status = models.CharField(
         max_length=16,
         choices=CONNECTION_STATUS_CHOICES,
         default="DISCONNECTED"
     )
-    tools_json = models.TextField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -54,6 +56,6 @@ class MCPServer(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.id:
-            self.id = f"agt_{shortuuid.uuid()}"
+            self.id = f"mcp_{shortuuid.uuid()}"
         super().save(*args, **kwargs)
 

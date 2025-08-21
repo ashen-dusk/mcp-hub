@@ -1,17 +1,45 @@
 from django.contrib import admin
-from .models import MCPServer
+from django import forms
+from django.db import models
+from django_svelte_jsoneditor.widgets import SvelteJSONEditorWidget
+from .models import MCPServer, Agent, Tool
+
+
+class MCPServerAdminForm(forms.ModelForm):
+    class Meta:
+        model = MCPServer
+        fields = "__all__"
+        widgets = {
+            "args": SvelteJSONEditorWidget,
+            "headers": SvelteJSONEditorWidget,
+            "query_params": SvelteJSONEditorWidget,
+            "tools": SvelteJSONEditorWidget,
+        }
 
 
 @admin.register(MCPServer)
 class MCPServerAdmin(admin.ModelAdmin):
-    list_display = ("name", "transport", "enabled", "created_at", "updated_at")
-    list_filter = ("transport", "enabled")
-    search_fields = ("name", "url", "command")
-    readonly_fields = ("id", "created_at", "updated_at",)
+    form = MCPServerAdminForm
+    list_display = ("name", "transport", "enabled", "connection_status", "updated_at")
+    search_fields = ("name", "transport")
+    list_filter = ("transport", "enabled", "connection_status")
 
-    # :: TODO: add fieldsets
-    # fieldsets = (
-    #     (None, {"fields": ("name", "transport", "enabled")}),
-    #     ("Connection", {"fields": ("url", "command", "args_json", "headers_json", "query_params_json")}),
-    #     ("Timestamps", {"fields": ("created_at", "updated_at")}),
-    # )
+
+@admin.register(Agent)
+class AssistantAdmin(admin.ModelAdmin):
+    formfield_overrides = {
+        models.JSONField: {"widget": SvelteJSONEditorWidget},
+    }
+    list_display = ("name", "type", "is_active", "created_at")
+    search_fields = ("name", "type")
+    list_filter = ("type", "is_active")
+
+
+@admin.register(Tool)
+class ToolAdmin(admin.ModelAdmin):
+    formfield_overrides = {
+        models.JSONField: {"widget": SvelteJSONEditorWidget},
+    }
+    list_display = ("name", "agent", "type", "is_active", "updated_at")
+    search_fields = ("name", "type")
+    list_filter = ("type", "is_active", "agent")

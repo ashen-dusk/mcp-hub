@@ -1,13 +1,14 @@
 import strawberry
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from strawberry.scalars import JSON
 
 # ── graphql: types ────────────────────────────────────────────────────────────
 @strawberry.type
 class ToolInfo:
     name: str
     description: str
-    schema: str
+    schema: JSON
 
 @strawberry.type
 class MCPServerType:
@@ -16,7 +17,9 @@ class MCPServerType:
     transport: str
     url: Optional[str]
     command: Optional[str]
-    args_json: Optional[str]
+    args: Optional[JSON]
+    headers: Optional[JSON]
+    query_params: Optional[JSON]
     enabled: bool
     connection_status: str
     tools: List[ToolInfo]

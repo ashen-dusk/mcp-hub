@@ -10,7 +10,8 @@ from app.mcp.types import (
     ConnectionResult, 
     DisconnectResult, 
     ToolInfo,
-    ServerHealthInfo
+    ServerHealthInfo,
+    JSON
 )
 
 @strawberry.type
@@ -24,14 +25,15 @@ class Query:
         for server in mcp_servers:
             # :: convert tools to ToolInfo objects
             tool_info_list = []
-            for tool in server.tools:
-                tool_info_list.append(
-                    ToolInfo(
-                        name=tool["name"],
-                        description=tool["description"],
-                        schema=tool["schema"],  # Already a JSON string from manager
+            if server.tools:
+                for tool in server.tools:
+                    tool_info_list.append(
+                        ToolInfo(
+                            name=tool["name"],
+                            description=tool["description"],
+                            schema=tool["schema"],
+                        )
                     )
-                )
             
             result.append(
                 MCPServerType(
@@ -40,7 +42,9 @@ class Query:
                     transport=server.transport,
                     url=server.url,
                     command=server.command,
-                    args_json=server.args_json,
+                    args=server.args,
+                    headers=server.headers,
+                    query_params=server.query_params,
                     enabled=server.enabled,
                     connection_status=server.connection_status,
                     tools=tool_info_list,
@@ -74,18 +78,18 @@ class Mutation:
         transport: str,
         url: Optional[str] = None,
         command: Optional[str] = None,
-        args_json: Optional[str] = None,
-        headers_json: Optional[str] = None,
-        query_params_json: Optional[str] = None,
+        args: Optional[JSON] = None,
+        headers: Optional[JSON] = None,
+        query_params: Optional[JSON] = None,
     ) -> MCPServerType:
         server = await mcp.asave_server(
             name=name,
             transport=transport,
             url=url,
             command=command,
-            args_json=args_json,
-            headers_json=headers_json,
-            query_params_json=query_params_json,
+            args=args,
+            headers=headers,
+            query_params=query_params,
         )
         return MCPServerType(
             id=server.id,
@@ -93,11 +97,13 @@ class Mutation:
             transport=server.transport,
             url=server.url,
             command=server.command,
-            args_json=server.args_json,
+            args=server.args,
+            headers=server.headers,
+            query_params=server.query_params,
             enabled=server.enabled,
             connection_status="DISCONNECTED",
-            updated_at=server.updated_at,
             tools=[],
+            updated_at=server.updated_at,
         )
 
     @strawberry.mutation
@@ -117,11 +123,13 @@ class Mutation:
             transport=server.transport,
             url=server.url,
             command=server.command,
-            args_json=server.args_json,
+            args=server.args,
+            headers=server.headers,
+            query_params=server.query_params,
             enabled=server.enabled,
             connection_status="DISCONNECTED",
-            updated_at=server.updated_at,
             tools=[],
+            updated_at=server.updated_at,
         )
 
     @strawberry.mutation

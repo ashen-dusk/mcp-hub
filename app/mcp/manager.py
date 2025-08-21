@@ -101,8 +101,8 @@ class MCP:
                 connected_info = self.connections[server.name]
                 server.tools = self._serialize_tools(connected_info["tools"])
             # :: otherwise, get tools from the last known state in the DB
-            elif server.tools_json:
-                server.tools = _safe_json_loads(server.tools_json) or []
+            elif server.tools:
+                server.tools = server.tools
             else:
                 server.tools = []
         
@@ -112,7 +112,7 @@ class MCP:
         """Sets all servers to DISCONNECTED on application startup."""
         await MCPServer.objects.all().aupdate(
             connection_status="DISCONNECTED",
-            tools_json=None
+            tools=[]
         )
 
     async def asave_server(
@@ -121,9 +121,9 @@ class MCP:
         transport: str,
         url: Optional[str] = None,
         command: Optional[str] = None,
-        args_json: Optional[str] = None,
-        headers_json: Optional[str] = None,
-        query_params_json: Optional[str] = None,
+        args: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        query_params: Optional[dict] = None,
     ) -> MCPServer:
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
@@ -131,9 +131,9 @@ class MCP:
                 "transport": transport,
                 "url": url,
                 "command": command,
-                "args_json": args_json,
-                "headers_json": headers_json,
-                "query_params_json": query_params_json,
+                "args": args or {},
+                "headers": headers or {},
+                "query_params": query_params or {},
                 "enabled": True,
             },
         )
@@ -181,17 +181,16 @@ class MCP:
         async for rec in qs.all():
             logging.debug(f"Building adapter map for: name={rec.name} transport={rec.transport}")
             if rec.transport == "stdio":
-                args = _safe_json_loads(rec.args_json) or []
                 adapter_map[rec.name] = {
                     "command": rec.command or "",
-                    "args": [str(x) for x in args if isinstance(args, list)],
+                    "args": [str(x) for x in rec.args if isinstance(rec.args, list)],
                     "transport": "stdio",
                 }
             else:
                 base_url = rec.url or ""
-                if getattr(rec, "query_params_json", None):
-                    logging.debug(f"Merging query params for {rec.name}: {rec.query_params_json}")
-                    qp = _safe_json_loads(rec.query_params_json)
+                if rec.query_params:
+                    logging.debug(f"Merging query params for {rec.name}: {rec.query_params}")
+                    qp = rec.query_params
                     if isinstance(qp, dict) and qp:
                         try:
                             parts = list(urlsplit(base_url))
@@ -210,8 +209,8 @@ class MCP:
                     "transport": rec.transport,
                 }
                 # attach headers if provided
-                if getattr(rec, "headers_json", None):
-                    headers = _safe_json_loads(rec.headers_json)
+                if rec.headers:
+                    headers = rec.headers
                     if isinstance(headers, dict) and headers:
                         entry["headers"] = headers
                 adapter_map[rec.name] = entry
@@ -313,10 +312,10 @@ class MCP:
             # :: update server status in the database
             tools_info = self._serialize_tools(tools)
             server.connection_status = "CONNECTED"
-            server.tools_json = _safe_json_dumps(tools_info)
-            await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
+            server.tools = tools_info
+            await server.asave(update_fields=["connection_status", "tools", "updated_at"])
             
-            # rebuild the shared client to include this server
+            # Rebuild the shared client to include this server
             await self.initialize_client()
             
             return True, "Connected successfully", tools_info
@@ -328,8 +327,8 @@ class MCP:
             try:
                 server = await MCPServer.objects.aget(name=name)
                 server.connection_status = "FAILED"
-                server.tools_json = None
-                await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
+                server.tools = []
+                await server.asave(update_fields=["connection_status", "tools", "updated_at"])
             except MCPServer.DoesNotExist:
                 pass  # Server not found, nothing to update
 
@@ -383,8 +382,8 @@ class MCP:
             try:
                 server = await MCPServer.objects.aget(name=name)
                 server.connection_status = "DISCONNECTED"
-                server.tools_json = None
-                await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
+                server.tools = []
+                await server.asave(update_fields=["connection_status", "tools", "updated_at"])
             except MCPServer.DoesNotExist:
                 pass  # Or log a warning
 

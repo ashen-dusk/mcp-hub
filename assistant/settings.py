@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'strawberry_django',
+    'django_svelte_jsoneditor',
     'app',
 ]
 
