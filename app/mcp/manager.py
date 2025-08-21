@@ -45,29 +45,33 @@ class MCP:
         self.tools: List[Any] = []
         self.connected_servers: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
     
+    def _serialize_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        """Convert tool objects to a serializable list of dicts for GraphQL."""
+        tools_info: List[Dict[str, Any]] = []
+        for tool in tools:
+            schema = getattr(tool, 'schema', {})
+            tool_info = {
+                "name": getattr(tool, 'name', str(tool)),
+                "description": getattr(tool, 'description', ''),
+                "schema": _safe_json_dumps(schema) if schema else "{}",
+            }
+            tools_info.append(tool_info)
+        return tools_info
+
     async def alist_servers(self) -> List[MCPServer]:
         """Get all servers with connection status and tool information."""
         servers = [s async for s in MCPServer.objects.all().order_by("name")]
         
-        # Add connection status and tool info to each server
+        # add connection status and tool info to each server
         for server in servers:
-            # Check if server is connected
+            # check if server is connected
             if server.name in self.connected_servers:
                 connected_info = self.connected_servers[server.name]
                 server.connection_status = "CONNECTED"
                 server.connected_at = connected_info["connected_at"]
                 server.tool_count = len(connected_info["tools"])
-                # Convert tools to serializable format
-                tools_info = []
-                for tool in connected_info["tools"]:
-                    schema = getattr(tool, 'schema', {})
-                    tool_info = {
-                        "name": getattr(tool, 'name', str(tool)),
-                        "description": getattr(tool, 'description', ''),
-                        "schema": _safe_json_dumps(schema) if schema else "{}"
-                    }
-                    tools_info.append(tool_info)
-                server.tools = tools_info
+                # convert tools to serializable format
+                server.tools = self._serialize_tools(connected_info["tools"])
             else:
                 server.connection_status = "DISCONNECTED"
                 server.connected_at = None
@@ -124,7 +128,7 @@ class MCP:
     async def _build_adapter_map(self) -> Dict[str, Dict[str, Any]]:
         adapter_map: Dict[str, Dict[str, Any]] = {}
         async for rec in MCPServer.objects.filter(enabled=True).all():
-            print(f"DEBUG: rec: {rec.query_params_json}")
+            logging.debug(f"Building adapter map for: name={rec.name} transport={rec.transport}")
             if rec.transport == "stdio":
                 args = _safe_json_loads(rec.args_json) or []
                 adapter_map[rec.name] = {
@@ -135,7 +139,7 @@ class MCP:
             else:
                 base_url = rec.url or ""
                 if getattr(rec, "query_params_json", None):
-                    print(f"DEBUG: rec.query_params_json: {rec.query_params_json}")
+                    logging.debug(f"Merging query params for {rec.name}: {rec.query_params_json}")
                     qp = _safe_json_loads(rec.query_params_json)
                     if isinstance(qp, dict) and qp:
                         try:
@@ -146,9 +150,9 @@ class MCP:
                             merged = {**existing, **{k: v for k, v in qp.items()}}
                             parts[3] = urlencode(merged, doseq=True)
                             base_url = urlunsplit(parts)
-                            print(f"DEBUG: base_url: {base_url}")
+                            logging.debug(f"Final base_url for {rec.name}: {base_url}")
                         except Exception as e:
-                            logging.warning(f"DEBUG: error merging query params: {e}")
+                            logging.warning(f"Error merging query params for {rec.name}: {e}")
 
                 entry: Dict[str, Any] = {
                     "url": base_url,
@@ -166,12 +170,12 @@ class MCP:
                         headers["Accept"] = "text/event-stream"
                     entry["headers"] = headers
                     
-                    # Check if this is Tavily server and handle differently
+                    # check if this is Tavily server and handle differently
                     if "tavily.com" in base_url:
-                        # Tavily might need different transport or headers
+                        # tavily might need different transport or headers
                         logging.info(f"Detected Tavily server, using streamable_http transport instead of SSE")
                         entry["transport"] = "streamable_http"
-                        # Remove SSE-specific headers
+                        # remove SSE-specific headers
                         if "Accept" in headers:
                             del headers["Accept"]
                 adapter_map[rec.name] = entry
@@ -185,7 +189,7 @@ class MCP:
             return
 
         try:
-            print(f"Initializing MCP client with adapter map: {self.adapter_map}")
+            logging.debug(f"Initializing MCP client with adapter map: {self.adapter_map}")
             self.client = MultiServerMCPClient(self.adapter_map)
             self.tools = await asyncio.wait_for(self.client.get_tools(), timeout=8.0)
 
@@ -195,7 +199,7 @@ class MCP:
             self.tools = []
         except Exception as e:
             logging.exception(f"Failed to initialize MCP client: {e}")
-            # Try to handle specific transport errors
+            # try to handle specific transport errors
             if "SSEError" in str(e) or "text/event-stream" in str(e):
                 logging.warning("SSE transport error detected, this might be a server configuration issue")
             self.client = None
@@ -224,18 +228,9 @@ class MCP:
             server_config = {name: adapter_map[name]}
             client = MultiServerMCPClient(server_config)
             tools = await asyncio.wait_for(client.get_tools(), timeout=5.0)
-            
             # Convert tools to serializable format
-            tools_info = []
-            for tool in tools:
-                schema = getattr(tool, 'schema', {})
-                tool_info = {
-                    "name": getattr(tool, 'name', str(tool)),
-                    "description": getattr(tool, 'description', ''),
-                    "schema": _safe_json_dumps(schema) if schema else "{}"
-                }
-                tools_info.append(tool_info)
-            
+            tools_info = self._serialize_tools(tools)
+
             return "OK", tools_info
         except asyncio.TimeoutError:
             return "TIMEOUT", []
@@ -251,29 +246,29 @@ class MCP:
             Tuple of (success: bool, status_message: str, tools: List[Dict])
         """
         try:
-            # Check if server exists and is enabled
+            # check if server exists and is enabled
             server = await MCPServer.objects.aget(name=name)
             if not server.enabled:
                 return False, "Server is disabled", []
             
-            # Check server health first
+            # check server health first
             health_status, _ = await self.acheck_server_health(name)
             if health_status != "OK":
                 return False, f"Server health check failed: {health_status}", []
             
-            # Build adapter map for this specific server
+            # build adapter map for this specific server
             adapter_map = await self._build_adapter_map()
             if name not in adapter_map:
                 return False, "Server configuration not found", []
             
-            # Create client for this specific server
+            # create client for this specific server
             server_config = {name: adapter_map[name]}
             client = MultiServerMCPClient(server_config)
             
-            # Get tools from the server
+            # get tools from the server
             tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
             
-            # Store connected server info
+            # store connected server info
             self.connected_servers[name] = {
                 "client": client,
                 "config": adapter_map[name],
@@ -282,15 +277,7 @@ class MCP:
             }
             
             # Convert tools to serializable format
-            tools_info = []
-            for tool in tools:
-                schema = getattr(tool, 'schema', {})
-                tool_info = {
-                    "name": getattr(tool, 'name', str(tool)),
-                    "description": getattr(tool, 'description', ''),
-                    "schema": _safe_json_dumps(schema) if schema else "{}"
-                }
-                tools_info.append(tool_info)
+            tools_info = self._serialize_tools(tools)
             
             return True, "Connected successfully", tools_info
             
@@ -313,7 +300,7 @@ class MCP:
             if name not in self.connected_servers:
                 return False, "Server not connected"
             
-            # Get the client and close it if it has a close method
+            # get the client and close it if it has a close method
             server_info = self.connected_servers[name]
             client = server_info.get("client")
             
@@ -323,7 +310,7 @@ class MCP:
                 except Exception as e:
                     logging.warning(f"Error closing client for {name}: {e}")
             
-            # Remove from connected servers
+            # remove from connected servers
             del self.connected_servers[name]
             
             return True, "Disconnected successfully"
@@ -343,7 +330,7 @@ class MCP:
         return self.tools
 
 
-# Global instance
+# global instance
 mcp = MCP()
 
 

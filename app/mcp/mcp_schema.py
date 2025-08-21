@@ -20,7 +20,7 @@ class Query:
         rows = await mcp.alist_servers()
         result: List[MCPServerType] = []
         for r in rows:
-            # Convert tools to ToolInfo objects
+            # convert tools to ToolInfo objects
             tool_info_list = []
             for tool in r.tools:
                 tool_info_list.append(
@@ -50,15 +50,9 @@ class Query:
     @strawberry.field
     async def mcp_server_health(self, info: Info, name: str) -> ServerHealthInfo:
         status, tools = await mcp.acheck_server_health(name)
-        tool_info_list = []
-        for tool in tools:
-            tool_info_list.append(
-                ToolInfo(
-                    name=tool["name"],
-                    description=tool["description"],
-                    schema=tool["schema"],  # Already a JSON string from manager
-                )
-            )
+        tool_info_list = [
+            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
+        ]
         return ServerHealthInfo(
             status=status,
             tools=tool_info_list,
@@ -127,17 +121,11 @@ class Mutation:
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
         success, message, tools = await mcp.connect_server(name)
         print(f"Success: {success}, Message: {message}, Tools: {tools}")
-        tool_info_list = []
-        for tool in tools:
-            tool_info_list.append(
-                ToolInfo(
-                    name=tool["name"],
-                    description=tool["description"],
-                    schema=tool["schema"],  # Already a JSON string from manager
-                )
-            )
+        tool_info_list = [
+            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
+        ]
         
-        # Determine connection status and message
+        # determine connection status and message
         if success:
             connection_status = "CONNECTED"
             final_message = f"Successfully connected to {name}"
