@@ -52,7 +52,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
         
     system_message = f"""
-        You are a helpful agent that can search the web for information.
+        You are a helpful assistant that can answer questions and perform tasks using the MCP servers.
         """
     response = await llm_with_tools.ainvoke(
         [
