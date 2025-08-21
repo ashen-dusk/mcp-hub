@@ -5,8 +5,13 @@ from strawberry.types import Info
 
 from app.mcp.manager import mcp
 from app.mcp.models import MCPServer
-from app.mcp.types import MCPServerType
-
+from app.mcp.types import (
+    MCPServerType, 
+    ConnectionResult, 
+    DisconnectResult, 
+    ToolInfo,
+    ServerHealthInfo
+)
 
 @strawberry.type
 class Query:
@@ -15,6 +20,17 @@ class Query:
         rows = await mcp.alist_servers()
         result: List[MCPServerType] = []
         for r in rows:
+            # Convert tools to ToolInfo objects
+            tool_info_list = []
+            for tool in r.tools:
+                tool_info_list.append(
+                    ToolInfo(
+                        name=tool["name"],
+                        description=tool["description"],
+                        schema=tool["schema"],  # Already a JSON string from manager
+                    )
+                )
+            
             result.append(
                 MCPServerType(
                     name=r.name,
@@ -22,13 +38,31 @@ class Query:
                     url=r.url,
                     command=r.command,
                     args_json=r.args_json,
+                    enabled=r.enabled,
+                    connection_status=r.connection_status,
+                    connected_at=r.connected_at,
+                    tool_count=r.tool_count,
+                    tools=tool_info_list,
                 )
             )
         return result
 
     @strawberry.field
-    async def mcp_server_health(self, info: Info, name: str) -> str:
-        return await mcp.acheck_server_health(name)
+    async def mcp_server_health(self, info: Info, name: str) -> ServerHealthInfo:
+        status, tools = await mcp.acheck_server_health(name)
+        tool_info_list = []
+        for tool in tools:
+            tool_info_list.append(
+                ToolInfo(
+                    name=tool["name"],
+                    description=tool["description"],
+                    schema=tool["schema"],  # Already a JSON string from manager
+                )
+            )
+        return ServerHealthInfo(
+            status=status,
+            tools=tool_info_list,
+        )
 
 
 @strawberry.type
@@ -60,6 +94,11 @@ class Mutation:
             url=rec.url,
             command=rec.command,
             args_json=rec.args_json,
+            enabled=rec.enabled,
+            connection_status="DISCONNECTED",
+            connected_at=None,
+            tool_count=0,
+            tools=[],
         )
 
     @strawberry.mutation
@@ -77,4 +116,47 @@ class Mutation:
             url=rec.url,
             command=rec.command,
             args_json=rec.args_json,
+            enabled=rec.enabled,
+            connection_status="DISCONNECTED",
+            connected_at=None,
+            tool_count=0,
+            tools=[],
+        )
+
+    @strawberry.mutation
+    async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
+        success, message, tools = await mcp.connect_server(name)
+        print(f"Success: {success}, Message: {message}, Tools: {tools}")
+        tool_info_list = []
+        for tool in tools:
+            tool_info_list.append(
+                ToolInfo(
+                    name=tool["name"],
+                    description=tool["description"],
+                    schema=tool["schema"],  # Already a JSON string from manager
+                )
+            )
+        
+        # Determine connection status and message
+        if success:
+            connection_status = "CONNECTED"
+            final_message = f"Successfully connected to {name}"
+        else:
+            connection_status = "FAILED"
+            final_message = message
+        
+        return ConnectionResult(
+            success=success,
+            message=final_message,
+            tools=tool_info_list,
+            server_name=name,
+            connection_status=connection_status,
+        )
+
+    @strawberry.mutation
+    async def disconnect_mcp_server(self, info: Info, name: str) -> DisconnectResult:
+        success, message = await mcp.disconnect_server(name)
+        return DisconnectResult(
+            success=success,
+            message=message,
         )

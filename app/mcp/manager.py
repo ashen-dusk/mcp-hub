@@ -2,7 +2,7 @@ import json
 import asyncio
 import logging
 import ast
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
@@ -21,14 +21,60 @@ def _safe_json_loads(s: Optional[str]) -> Optional[Any]:
             return None
 
 
+def _safe_json_dumps(obj: Any) -> str:
+    """Safely serialize an object to JSON, handling non-serializable types."""
+    def json_serializer(obj):
+        if callable(obj):
+            return str(obj)
+        elif hasattr(obj, '__dict__'):
+            return obj.__dict__
+        else:
+            return str(obj)
+    
+    try:
+        return json.dumps(obj, default=json_serializer)
+    except Exception as e:
+        logging.warning(f"Failed to serialize object to JSON: {e}")
+        return "{}"
+
+
 class MCP:
     def __init__(self):
         self.client: Optional[MultiServerMCPClient] = None
         self.adapter_map: Dict[str, Dict[str, Any]] = {}
         self.tools: List[Any] = []
+        self.connected_servers: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
     
     async def alist_servers(self) -> List[MCPServer]:
-        return [s async for s in MCPServer.objects.all().order_by("name")]
+        """Get all servers with connection status and tool information."""
+        servers = [s async for s in MCPServer.objects.all().order_by("name")]
+        
+        # Add connection status and tool info to each server
+        for server in servers:
+            # Check if server is connected
+            if server.name in self.connected_servers:
+                connected_info = self.connected_servers[server.name]
+                server.connection_status = "CONNECTED"
+                server.connected_at = connected_info["connected_at"]
+                server.tool_count = len(connected_info["tools"])
+                # Convert tools to serializable format
+                tools_info = []
+                for tool in connected_info["tools"]:
+                    schema = getattr(tool, 'schema', {})
+                    tool_info = {
+                        "name": getattr(tool, 'name', str(tool)),
+                        "description": getattr(tool, 'description', ''),
+                        "schema": _safe_json_dumps(schema) if schema else "{}"
+                    }
+                    tools_info.append(tool_info)
+                server.tools = tools_info
+            else:
+                server.connection_status = "DISCONNECTED"
+                server.connected_at = None
+                server.tool_count = 0
+                server.tools = []
+        
+        return servers
 
     async def asave_server(
         self,
@@ -119,6 +165,15 @@ class MCP:
                     if "Accept" not in headers:
                         headers["Accept"] = "text/event-stream"
                     entry["headers"] = headers
+                    
+                    # Check if this is Tavily server and handle differently
+                    if "tavily.com" in base_url:
+                        # Tavily might need different transport or headers
+                        logging.info(f"Detected Tavily server, using streamable_http transport instead of SSE")
+                        entry["transport"] = "streamable_http"
+                        # Remove SSE-specific headers
+                        if "Accept" in headers:
+                            del headers["Accept"]
                 adapter_map[rec.name] = entry
         return adapter_map
 
@@ -140,32 +195,146 @@ class MCP:
             self.tools = []
         except Exception as e:
             logging.exception(f"Failed to initialize MCP client: {e}")
+            # Try to handle specific transport errors
+            if "SSEError" in str(e) or "text/event-stream" in str(e):
+                logging.warning("SSE transport error detected, this might be a server configuration issue")
             self.client = None
             self.tools = []
 
-    async def acheck_server_health(self, name: str) -> str:
+    async def acheck_server_health(self, name: str) -> tuple[str, list[dict[str, Any]]]:
+        """
+        Check server health and return tools if healthy.
+        
+        Returns:
+            Tuple of (status: str, tools: List[Dict])
+        """
         try:
             server = await MCPServer.objects.aget(name=name)
         except MCPServer.DoesNotExist:
-            return "NOT_FOUND"
+            return "NOT_FOUND", []
 
         if not server.enabled:
-            return "DISABLED"
+            return "DISABLED", []
 
         try:
             adapter_map = await self._build_adapter_map()
             if name not in adapter_map:
-                return "ERROR"
+                return "ERROR", []
 
             server_config = {name: adapter_map[name]}
             client = MultiServerMCPClient(server_config)
-            await asyncio.wait_for(client.get_tools(), timeout=5.0)
-            return "OK"
+            tools = await asyncio.wait_for(client.get_tools(), timeout=5.0)
+            
+            # Convert tools to serializable format
+            tools_info = []
+            for tool in tools:
+                schema = getattr(tool, 'schema', {})
+                tool_info = {
+                    "name": getattr(tool, 'name', str(tool)),
+                    "description": getattr(tool, 'description', ''),
+                    "schema": _safe_json_dumps(schema) if schema else "{}"
+                }
+                tools_info.append(tool_info)
+            
+            return "OK", tools_info
         except asyncio.TimeoutError:
-            return "TIMEOUT"
+            return "TIMEOUT", []
         except Exception as e:
             logging.warning(f"Health check for {name} failed: {e}")
-            return "ERROR"
+            return "ERROR", []  
+
+    async def connect_server(self, name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        """
+        Connect to a specific MCP server and return connection status and tools.
+        
+        Returns:
+            Tuple of (success: bool, status_message: str, tools: List[Dict])
+        """
+        try:
+            # Check if server exists and is enabled
+            server = await MCPServer.objects.aget(name=name)
+            if not server.enabled:
+                return False, "Server is disabled", []
+            
+            # Check server health first
+            health_status, _ = await self.acheck_server_health(name)
+            if health_status != "OK":
+                return False, f"Server health check failed: {health_status}", []
+            
+            # Build adapter map for this specific server
+            adapter_map = await self._build_adapter_map()
+            if name not in adapter_map:
+                return False, "Server configuration not found", []
+            
+            # Create client for this specific server
+            server_config = {name: adapter_map[name]}
+            client = MultiServerMCPClient(server_config)
+            
+            # Get tools from the server
+            tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
+            
+            # Store connected server info
+            self.connected_servers[name] = {
+                "client": client,
+                "config": adapter_map[name],
+                "tools": tools,
+                "connected_at": asyncio.get_event_loop().time()
+            }
+            
+            # Convert tools to serializable format
+            tools_info = []
+            for tool in tools:
+                schema = getattr(tool, 'schema', {})
+                tool_info = {
+                    "name": getattr(tool, 'name', str(tool)),
+                    "description": getattr(tool, 'description', ''),
+                    "schema": _safe_json_dumps(schema) if schema else "{}"
+                }
+                tools_info.append(tool_info)
+            
+            return True, "Connected successfully", tools_info
+            
+        except MCPServer.DoesNotExist:
+            return False, "Server not found", []
+        except asyncio.TimeoutError:
+            return False, "Connection timeout", []
+        except Exception as e:
+            logging.exception(f"Failed to connect to server {name}: {e}")
+            return False, f"Connection failed: {str(e)}", []
+
+    async def disconnect_server(self, name: str) -> Tuple[bool, str]:
+        """
+        Disconnect from a specific MCP server.
+        
+        Returns:
+            Tuple of (success: bool, status_message: str)
+        """
+        try:
+            if name not in self.connected_servers:
+                return False, "Server not connected"
+            
+            # Get the client and close it if it has a close method
+            server_info = self.connected_servers[name]
+            client = server_info.get("client")
+            
+            if hasattr(client, 'close'):
+                try:
+                    await client.close()
+                except Exception as e:
+                    logging.warning(f"Error closing client for {name}: {e}")
+            
+            # Remove from connected servers
+            del self.connected_servers[name]
+            
+            return True, "Disconnected successfully"
+            
+        except Exception as e:
+            logging.exception(f"Failed to disconnect from server {name}: {e}")
+            return False, f"Disconnect failed: {str(e)}"
+
+
+
+
 
     def get_client(self) -> Optional[MultiServerMCPClient]:
         return self.client
