@@ -7,7 +7,11 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from django.utils import timezone
+from pydantic.v1 import BaseModel
 
+class EmptyArgsSchema(BaseModel):
+    """An empty schema for tools that have no parameters."""
+    pass
 
 def _safe_json_loads(s: Optional[str]) -> Optional[Any]:
     if not s:
@@ -46,15 +50,42 @@ class MCP:
         self.tools: List[Any] = []
         self.connections: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
     
+    def _patch_tools_schema(self, tools: List[Any]) -> List[Any]:
+        """Ensures all tools have a valid schema for OpenAI."""
+        for tool in tools:
+            # FIX: OpenAI requires a non-empty object for function parameters.
+            # A schema is invalid if it's missing, or if it's a dict
+            # without a 'properties' key.
+            args_schema = getattr(tool, "args_schema", None)
+            is_invalid_dict_schema = isinstance(args_schema, dict) and "properties" not in args_schema
+
+            if not args_schema or is_invalid_dict_schema:
+                tool.args_schema = EmptyArgsSchema
+        return tools
+
     def _serialize_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
         """Convert tool objects to a serializable list of dicts for GraphQL."""
         tools_info: List[Dict[str, Any]] = []
         for tool in tools:
-            schema = getattr(tool, 'schema', {})
+            schema_dict = {}
+
+            # A tool's schema should be on the `args_schema` attribute.
+            if hasattr(tool, "args_schema"):
+                args_schema = tool.args_schema
+                # Case 1: It's a Pydantic model, so we call .schema() to generate the dict.
+                if hasattr(args_schema, "schema") and callable(args_schema.schema):
+                    try:
+                        schema_dict = args_schema.schema()
+                    except Exception:
+                        pass
+                # Case 2: It's already a dictionary.
+                elif isinstance(args_schema, dict):
+                    schema_dict = args_schema
+
             tool_info = {
                 "name": getattr(tool, 'name', str(tool)),
                 "description": getattr(tool, 'description', ''),
-                "schema": _safe_json_dumps(schema) if schema else "{}",
+                "schema": _safe_json_dumps(schema_dict) if schema_dict else "{}",
             }
             tools_info.append(tool_info)
         return tools_info
@@ -198,7 +229,8 @@ class MCP:
         try:
             logging.debug(f"Initializing MCP client with adapter map: {self.adapter_map}")
             self.client = MultiServerMCPClient(self.adapter_map)
-            self.tools = await asyncio.wait_for(self.client.get_tools(), timeout=8.0)
+            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=8.0)
+            self.tools = self._patch_tools_schema(raw_tools)
 
         except asyncio.TimeoutError:
             logging.warning("MCP client initialization or tool fetching timed out.")
@@ -232,7 +264,8 @@ class MCP:
             adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
                 return "ERROR", []
-            tools = await asyncio.wait_for(self.client.get_tools(), timeout=5.0)
+            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=5.0)
+            tools = self._patch_tools_schema(raw_tools)
             # Convert tools to serializable format
             tools_info = self._serialize_tools(tools)
 
@@ -267,7 +300,8 @@ class MCP:
             client = MultiServerMCPClient(server_config)
             
             # get tools from the server
-            tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
+            raw_tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
+            tools = self._patch_tools_schema(raw_tools)
             
             # store connected server info
             self.connections[name] = {
