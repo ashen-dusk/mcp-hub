@@ -1,4 +1,5 @@
 import strawberry
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 # ── graphql: types ────────────────────────────────────────────────────────────
@@ -10,6 +11,7 @@ class ToolInfo:
 
 @strawberry.type
 class MCPServerType:
+    id: strawberry.ID
     name: str
     transport: str
     url: Optional[str]
@@ -17,9 +19,8 @@ class MCPServerType:
     args_json: Optional[str]
     enabled: bool
     connection_status: str
-    connected_at: Optional[float]
-    tool_count: int
     tools: List[ToolInfo]
+    updated_at: datetime
 
 @strawberry.type
 # .. type: ConnectionResult

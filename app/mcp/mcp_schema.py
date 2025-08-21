@@ -19,12 +19,12 @@ class Query:
     @strawberry.field
     # .. field: mcp_servers
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
-        rows = await mcp.alist_servers()
+        mcp_servers = await mcp.alist_servers()
         result: List[MCPServerType] = []
-        for r in rows:
+        for server in mcp_servers:
             # :: convert tools to ToolInfo objects
             tool_info_list = []
-            for tool in r.tools:
+            for tool in server.tools:
                 tool_info_list.append(
                     ToolInfo(
                         name=tool["name"],
@@ -35,16 +35,16 @@ class Query:
             
             result.append(
                 MCPServerType(
-                    name=r.name,
-                    transport=r.transport,
-                    url=r.url,
-                    command=r.command,
-                    args_json=r.args_json,
-                    enabled=r.enabled,
-                    connection_status=r.connection_status,
-                    connected_at=r.connected_at,
-                    tool_count=r.tool_count,
+                    id=server.id,
+                    name=server.name,
+                    transport=server.transport,
+                    url=server.url,
+                    command=server.command,
+                    args_json=server.args_json,
+                    enabled=server.enabled,
+                    connection_status=server.connection_status,
                     tools=tool_info_list,
+                    updated_at=server.updated_at,
                 )
             )
         return result
@@ -78,7 +78,7 @@ class Mutation:
         headers_json: Optional[str] = None,
         query_params_json: Optional[str] = None,
     ) -> MCPServerType:
-        rec = await mcp.asave_server(
+        server = await mcp.asave_server(
             name=name,
             transport=transport,
             url=url,
@@ -88,15 +88,15 @@ class Mutation:
             query_params_json=query_params_json,
         )
         return MCPServerType(
-            name=rec.name,
-            transport=rec.transport,
-            url=rec.url,
-            command=rec.command,
-            args_json=rec.args_json,
-            enabled=rec.enabled,
+            id=server.id,
+            name=server.name,
+            transport=server.transport,
+            url=server.url,
+            command=server.command,
+            args_json=server.args_json,
+            enabled=server.enabled,
             connection_status="DISCONNECTED",
-            connected_at=None,
-            tool_count=0,
+            updated_at=server.updated_at,
             tools=[],
         )
 
@@ -110,17 +110,17 @@ class Mutation:
     async def set_mcp_server_enabled(
         self, info: Info, name: str, enabled: bool
     ) -> MCPServerType:
-        rec = await mcp.aet_server_enabled(name=name, enabled=enabled)
+        server = await mcp.aet_server_enabled(name=name, enabled=enabled)
         return MCPServerType(
-            name=rec.name,
-            transport=rec.transport,
-            url=rec.url,
-            command=rec.command,
-            args_json=rec.args_json,
-            enabled=rec.enabled,
+            id=server.id,
+            name=server.name,
+            transport=server.transport,
+            url=server.url,
+            command=server.command,
+            args_json=server.args_json,
+            enabled=server.enabled,
             connection_status="DISCONNECTED",
-            connected_at=None,
-            tool_count=0,
+            updated_at=server.updated_at,
             tools=[],
         )
 

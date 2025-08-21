@@ -8,8 +8,8 @@ class MCPServerAdmin(admin.ModelAdmin):
     list_filter = ("transport", "enabled")
     search_fields = ("name", "url", "command")
     readonly_fields = ("created_at", "updated_at")
-    fieldsets = (
-        (None, {"fields": ("name", "transport", "enabled")}),
-        ("Connection", {"fields": ("url", "command", "args_json", "headers_json", "query_params_json")}),
-        ("Timestamps", {"fields": ("created_at", "updated_at")}),
-    )
+    # fieldsets = (
+    #     (None, {"fields": ("name", "transport", "enabled")}),
+    #     ("Connection", {"fields": ("url", "command", "args_json", "headers_json", "query_params_json")}),
+    #     ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    # )

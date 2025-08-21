@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
+from django.utils import timezone
 
 
 def _safe_json_loads(s: Optional[str]) -> Optional[Any]:
@@ -43,7 +44,7 @@ class MCP:
         self.client: Optional[MultiServerMCPClient] = None
         self.adapter_map: Dict[str, Dict[str, Any]] = {}
         self.tools: List[Any] = []
-        self.connected_servers: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
+        self.connections: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
     
     def _serialize_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
         """Convert tool objects to a serializable list of dicts for GraphQL."""
@@ -64,21 +65,24 @@ class MCP:
         
         # add connection status and tool info to each server
         for server in servers:
-            # check if server is connected
-            if server.name in self.connected_servers:
-                connected_info = self.connected_servers[server.name]
-                server.connection_status = "CONNECTED"
-                server.connected_at = connected_info["connected_at"]
-                server.tool_count = len(connected_info["tools"])
-                # convert tools to serializable format
+            # :: if server is live, get tools from the live connection
+            if server.name in self.connections:
+                connected_info = self.connections[server.name]
                 server.tools = self._serialize_tools(connected_info["tools"])
+            # :: otherwise, get tools from the last known state in the DB
+            elif server.tools_json:
+                server.tools = _safe_json_loads(server.tools_json) or []
             else:
-                server.connection_status = "DISCONNECTED"
-                server.connected_at = None
-                server.tool_count = 0
                 server.tools = []
         
         return servers
+
+    async def areset_all_server_statuses(self):
+        """Sets all servers to DISCONNECTED on application startup."""
+        await MCPServer.objects.all().aupdate(
+            connection_status="DISCONNECTED",
+            tools_json=None
+        )
 
     async def asave_server(
         self,
@@ -110,9 +114,9 @@ class MCP:
             rec = await MCPServer.objects.aget(name=name)
             await rec.adelete()
             # Ensure any live connection tracking is cleared
-            if name in self.connected_servers:
+            if name in self.connections:
                 try:
-                    del self.connected_servers[name]
+                    del self.connections[name]
                 except Exception:
                     pass
             await self.initialize_client()  # re-initialize on change
@@ -129,9 +133,9 @@ class MCP:
         rec.enabled = enabled
         await rec.asave(update_fields=["enabled", "updated_at"])
         # If disabling, clear connection tracking for this server
-        if not enabled and name in self.connected_servers:
+        if not enabled and name in self.connections:
             try:
-                del self.connected_servers[name]
+                del self.connections[name]
             except Exception:
                 pass
         await self.initialize_client()  # re-initialize on change
@@ -184,7 +188,7 @@ class MCP:
 
     async def initialize_client(self):
         # Restrict adapter map to only explicitly connected servers
-        connected_names = list(self.connected_servers.keys())
+        connected_names = list(self.connections.keys())
         self.adapter_map = await self._build_adapter_map(names=connected_names)
         if not self.adapter_map:
             self.client = None
@@ -266,15 +270,17 @@ class MCP:
             tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
             
             # store connected server info
-            self.connected_servers[name] = {
+            self.connections[name] = {
                 "client": client,
                 "config": adapter_map[name],
                 "tools": tools,
-                "connected_at": asyncio.get_event_loop().time()
             }
             
-            # Convert tools to serializable format
+            # :: update server status in the database
             tools_info = self._serialize_tools(tools)
+            server.connection_status = "CONNECTED"
+            server.tools_json = _safe_json_dumps(tools_info)
+            await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
             
             # rebuild the shared client to include this server
             await self.initialize_client()
@@ -283,9 +289,19 @@ class MCP:
             
         except MCPServer.DoesNotExist:
             return False, "Server not found", []
-        except asyncio.TimeoutError:
-            return False, "Connection timeout", []
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
+            # update server status to FAILED
+            try:
+                server = await MCPServer.objects.aget(name=name)
+                server.connection_status = "FAILED"
+                server.tools_json = None
+                await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
+            except MCPServer.DoesNotExist:
+                pass  # Server not found, nothing to update
+
+            if isinstance(e, asyncio.TimeoutError):
+                return False, "Connection timeout", []
+            
             logging.exception(f"Failed to connect to server {name}: {e}")
             return False, f"Connection failed: {str(e)}", []
 
@@ -298,11 +314,11 @@ class MCP:
             Tuple of (success: bool, status_message: str)
         """
         try:
-            if name not in self.connected_servers:
+            if name not in self.connections:
                 return False, "Server not connected"
             
             # get the client and close it if it has a close method
-            server_info = self.connected_servers[name]
+            server_info = self.connections[name]
             client = server_info.get("client")
             # print(f"Client: {client}")
             print(f"Client type: {dir(client)}")
@@ -323,12 +339,21 @@ class MCP:
 
             # always remove from connected tracking and rebuild client
             try:
-                del self.connected_servers[name]
+                del self.connections[name]
             except Exception:
                 pass
 
             await self.initialize_client()
-            
+
+            # :: update server status in the database
+            try:
+                server = await MCPServer.objects.aget(name=name)
+                server.connection_status = "DISCONNECTED"
+                server.tools_json = None
+                await server.asave(update_fields=["connection_status", "tools_json", "updated_at"])
+            except MCPServer.DoesNotExist:
+                pass  # Or log a warning
+
             return True, "Disconnected successfully"
             
         except Exception as e:
