@@ -6,7 +6,7 @@ __all__ = ["MCPServer", "Agent", "Tool"]
 
 
 # ── Agent: model ─────────────────────────────────────────────────────────────
-class Agent(models.Model):
+class Assistant(models.Model):
     """
     Represents a registered AI agent (like ResearchAgent, SupportAgent, etc.)
     """
@@ -26,21 +26,23 @@ class Agent(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.id:
-            self.id = f"agt_{shortuuid.uuid()[:8]}"
+            self.id = f"assistant_{shortuuid.uuid()[:8]}"
         super().save(*args, **kwargs)
 
 # ── Tool: model ─────────────────────────────────────────────────────────────
 class Tool(models.Model):
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
-    agent = models.ForeignKey(
-        Agent,
+    assistant = models.ForeignKey(
+        Assistant,
         related_name="tools",
         on_delete=models.CASCADE,
-        help_text="The agent this tool belongs to"
+        null=True,
+        blank=True,
+        help_text="The agent this tool belongs to (required for active tools)"
     )
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
-    type = models.CharField(max_length=50)
+    category = models.CharField(max_length=50)
     config = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
 
@@ -49,8 +51,21 @@ class Tool(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["agent", "name"], name="unique_tool_per_agent")
+            models.UniqueConstraint(
+                fields=["assistant", "name"], 
+                name="unique_tool_per_assistant"
+            ),
+            models.CheckConstraint(
+               check=~(models.Q(is_active=True) & models.Q(assistant__isnull=True)),
+               name="active_tool_requires_assistant"
+            ),
         ]
 
     def __str__(self):
-        return f"{self.name} ({self.type}) for {self.agent.name}"
+        assistant_name = self.assistant.name if self.assistant else "Unassigned"
+        return f"{self.name} ({self.category}) for {assistant_name}"
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            self.id = f"tool_{shortuuid.uuid()[:8]}"
+        super().save(*args, **kwargs)
