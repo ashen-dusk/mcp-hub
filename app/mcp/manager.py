@@ -227,7 +227,17 @@ class MCP:
                 # Attach headers only from DB, no extra auth management
                 if rec.headers and isinstance(rec.headers, dict) and rec.headers:
                     entry["headers"] = rec.headers
-                
+                try:
+                    storage = FileTokenStorage(server_url=rec.url)
+                    print(f"Storage: {storage}")
+                    tokens = await storage.get_tokens()
+                    print(f"Token data: {tokens}")
+                    if tokens and tokens.access_token:
+                        entry["headers"] = {
+                            "Authorization": f"Bearer {tokens.access_token}"
+                        }
+                except Exception as e:
+                    logging.warning(f"Failed to fetch OAuth token for {rec.name}: {e}")
                 adapter_map[rec.name] = entry
         return adapter_map
 
@@ -243,7 +253,7 @@ class MCP:
         try:
             logging.debug(f"Initializing MCP client with adapter map: {self.adapter_map}")
             self.client = MultiServerMCPClient(self.adapter_map)
-            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=8.0)
+            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=30)
             self.tools = self._patch_tools_schema(raw_tools)
 
         except asyncio.TimeoutError:
@@ -318,6 +328,7 @@ class MCP:
                 callback_port=8293,
                 # scopes=["openid", "email", "profile", "search:read", "trends:read", "transcripts:read", "analytics:read"],
             )
+            print(f"OAuth: {oauth}")
             async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
                 await asyncio.wait_for(client.ping(), timeout=15.0)
                 tools_objs = await asyncio.wait_for(client.list_tools(), timeout=15.0)
@@ -334,13 +345,14 @@ class MCP:
             # Track connection state (no persistent client needed for now)
             self.connections[name] = {
                 "client": None,
-                "config": {"url": server.url},
+                "config": {"url": server.url, "oauth": oauth},
                 "tools": tools_objs,
             }
 
             # Persist tools for frontend consumption
             server.connection_status = "CONNECTED"
             server.tools = tools_info
+            
             await server.asave(update_fields=["connection_status", "tools", "updated_at"])
 
             return True, "Connected successfully (OAuth)", tools_info

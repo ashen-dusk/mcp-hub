@@ -37,6 +37,10 @@ class MCPServer(models.Model):
 
     # ── django: connection status fields ───────────────────────────────────────
     enabled = models.BooleanField(default=True)
+    requires_oauth2 = models.BooleanField(
+    default=False,
+    help_text="Indicates whether this MCP server requires OAuth for authentication."
+    )
     connection_status = models.CharField(
         max_length=16,
         choices=CONNECTION_STATUS_CHOICES,
