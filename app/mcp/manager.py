@@ -8,6 +8,13 @@ from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from django.utils import timezone
 from pydantic.v1 import BaseModel
+# OAuth2Error removed since we're using FastMCP's built-in OAuth
+try:
+    from fastmcp.client import Client as FastMCPClient  # type: ignore
+    from fastmcp.client.auth import OAuth  # type: ignore
+except Exception:  # pragma: no cover
+    FastMCPClient = None  # type: ignore
+    OAuth = None  # type: ignore
 
 class EmptyArgsSchema(BaseModel):
     """An empty schema for tools that have no parameters."""
@@ -208,11 +215,10 @@ class MCP:
                     "url": base_url,
                     "transport": rec.transport,
                 }
-                # attach headers if provided
-                if rec.headers:
-                    headers = rec.headers
-                    if isinstance(headers, dict) and headers:
-                        entry["headers"] = headers
+                # Attach headers only from DB, no extra auth management
+                if rec.headers and isinstance(rec.headers, dict) and rec.headers:
+                    entry["headers"] = rec.headers
+                
                 adapter_map[rec.name] = entry
         return adapter_map
 
@@ -278,64 +284,73 @@ class MCP:
     # .. op: connect_server
     async def connect_server(self, name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """
-        Connect to a specific MCP server and return connection status and tools.
-        
-        Returns:
-            Tuple of (success: bool, status_message: str, tools: List[Dict])
+        Connect to a specific MCP server using FastMCP's client and return tools.
+        This uses the documented auth="oauth" pattern and returns tools for the frontend.
         """
         try:
-            # check if server exists and is enabled
             server = await MCPServer.objects.aget(name=name)
-            if not server.enabled:
-                return False, "Server is disabled", []
-            
-            # build adapter map for this specific server
-            adapter_map = await self._build_adapter_map(names=[name])
-            if name not in adapter_map:
-                return False, "Server configuration not found", []
-            
-            # create client for this specific server
-            server_config = {name: adapter_map[name]}
-            client = MultiServerMCPClient(server_config)
-            
-            # get tools from the server
-            raw_tools = await asyncio.wait_for(client.get_tools(), timeout=8.0)
-            tools = self._patch_tools_schema(raw_tools)
-            
-            # store connected server info
+        except MCPServer.DoesNotExist:
+            return False, "Server not found", []
+
+        if not server.enabled:
+            return False, "Server is disabled", []
+
+        if not server.url:
+            return False, "Server URL is not configured", []
+
+        if FastMCPClient is None or OAuth is None:
+            return False, "FastMCP client is not available", []
+
+        try:
+            # Use FastMCP client with explicit scopes to match server grants
+            oauth = OAuth(
+                mcp_url=server.url,
+                scopes=["openid", "email", "profile", "search:read"],
+            )
+            async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
+                await asyncio.wait_for(client.ping(), timeout=15.0)
+                tools_objs = await asyncio.wait_for(client.list_tools(), timeout=15.0)
+
+            # Convert tools for storage/GraphQL
+            tools_info: List[Dict[str, Any]] = []
+            for t in tools_objs:
+                tools_info.append({
+                    "name": getattr(t, "name", str(t)),
+                    "description": getattr(t, "description", ""),
+                    "schema": "{}",
+                })
+
+            # Track connection state (no persistent client needed for now)
             self.connections[name] = {
-                "client": client,
-                "config": adapter_map[name],
-                "tools": tools,
+                "client": None,
+                "config": {"url": server.url},
+                "tools": tools_objs,
             }
-            
-            # :: update server status in the database
-            tools_info = self._serialize_tools(tools)
+
+            # Persist tools for frontend consumption
             server.connection_status = "CONNECTED"
             server.tools = tools_info
             await server.asave(update_fields=["connection_status", "tools", "updated_at"])
-            
-            # Rebuild the shared client to include this server
-            await self.initialize_client()
-            
-            return True, "Connected successfully", tools_info
-            
-        except MCPServer.DoesNotExist:
-            return False, "Server not found", []
-        except (asyncio.TimeoutError, Exception) as e:
-            # update server status to FAILED
+
+            return True, "Connected successfully (OAuth)", tools_info
+
+        except asyncio.TimeoutError:
+            # Timeout while pinging or listing tools
             try:
-                server = await MCPServer.objects.aget(name=name)
                 server.connection_status = "FAILED"
                 server.tools = []
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])
-            except MCPServer.DoesNotExist:
-                pass  # Server not found, nothing to update
-
-            if isinstance(e, asyncio.TimeoutError):
-                return False, "Connection timeout", []
-            
-            logging.exception(f"Failed to connect to server {name}: {e}")
+            except Exception:
+                pass
+            return False, "Connection timeout", []
+        except Exception as e:
+            # Update state and report the error message
+            try:
+                server.connection_status = "FAILED"
+                server.tools = []
+                await server.asave(update_fields=["connection_status", "tools", "updated_at"])
+            except Exception:
+                pass
             return False, f"Connection failed: {str(e)}", []
 
     # .. op: disconnect_server
