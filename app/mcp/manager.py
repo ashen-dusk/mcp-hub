@@ -8,6 +8,8 @@ from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from django.utils import timezone
 from pydantic.v1 import BaseModel
+from fastmcp.client.auth.oauth import FileTokenStorage
+
 # OAuth2Error removed since we're using FastMCP's built-in OAuth
 try:
     from fastmcp.client import Client as FastMCPClient  # type: ignore
@@ -150,6 +152,13 @@ class MCP:
     async def aremove_server(self, name: str) -> bool:
         try:
             rec = await MCPServer.objects.aget(name=name)
+            if rec.url:
+                try:
+                    storage = FileTokenStorage(server_url=rec.url)
+                    await storage.clear()
+                except Exception as e:
+                    logging.warning(f"Failed to clear tokens for {name}: {e}")
+
             await rec.adelete()
             # Ensure any live connection tracking is cleared
             if name in self.connections:
@@ -302,10 +311,12 @@ class MCP:
             return False, "FastMCP client is not available", []
 
         try:
-            # Use FastMCP client with explicit scopes to match server grants
+            # Use FastMCP client with explicit scopes to match server grants ( works with scalekit.ai)
             oauth = OAuth(
                 mcp_url=server.url,
-                scopes=["openid", "email", "profile", "search:read"],
+                client_name="Inspect MCP",
+                callback_port=8293,
+                # scopes=["openid", "email", "profile", "search:read", "trends:read", "transcripts:read", "analytics:read"],
             )
             async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
                 await asyncio.wait_for(client.ping(), timeout=15.0)
