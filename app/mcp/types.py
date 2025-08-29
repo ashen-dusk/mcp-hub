@@ -21,6 +21,7 @@ class MCPServerType:
     headers: Optional[JSON]
     query_params: Optional[JSON]
     enabled: bool
+    requires_oauth2: bool
     connection_status: str
     tools: List[ToolInfo]
     updated_at: datetime

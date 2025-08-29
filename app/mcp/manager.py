@@ -11,12 +11,9 @@ from pydantic.v1 import BaseModel
 from fastmcp.client.auth.oauth import FileTokenStorage
 
 # OAuth2Error removed since we're using FastMCP's built-in OAuth
-try:
-    from fastmcp.client import Client as FastMCPClient  # type: ignore
-    from fastmcp.client.auth import OAuth  # type: ignore
-except Exception:  # pragma: no cover
-    FastMCPClient = None  # type: ignore
-    OAuth = None  # type: ignore
+
+from fastmcp.client import Client as FastMCPClient  # type: ignore
+from fastmcp.client.auth import OAuth  # type: ignore
 
 class EmptyArgsSchema(BaseModel):
     """An empty schema for tools that have no parameters."""
@@ -133,6 +130,7 @@ class MCP:
         args: Optional[dict] = None,
         headers: Optional[dict] = None,
         query_params: Optional[dict] = None,
+        requires_oauth2: Optional[bool] = False,
     ) -> MCPServer:
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
@@ -144,6 +142,7 @@ class MCP:
                 "headers": headers or {},
                 "query_params": query_params or {},
                 "enabled": True,
+                "requires_oauth2": requires_oauth2,
             },
         )
         await self.initialize_client()  # re-initialize on change
@@ -224,20 +223,24 @@ class MCP:
                     "url": base_url,
                     "transport": rec.transport,
                 }
-                # Attach headers only from DB, no extra auth management
+                # Attach headers from DB
                 if rec.headers and isinstance(rec.headers, dict) and rec.headers:
                     entry["headers"] = rec.headers
-                try:
-                    storage = FileTokenStorage(server_url=rec.url)
-                    print(f"Storage: {storage}")
-                    tokens = await storage.get_tokens()
-                    print(f"Token data: {tokens}")
-                    if tokens and tokens.access_token:
-                        entry["headers"] = {
-                            "Authorization": f"Bearer {tokens.access_token}"
-                        }
-                except Exception as e:
-                    logging.warning(f"Failed to fetch OAuth token for {rec.name}: {e}")
+                
+                # Conditionally add OAuth2 tokens if required
+                if rec.requires_oauth2:
+                    try:
+                        storage = FileTokenStorage(server_url=rec.url)
+                        print(f"Storage: {storage}")
+                        tokens = await storage.get_tokens()
+                        print(f"Token data: {tokens}")
+                        if tokens and tokens.access_token:
+                            # Merge with existing headers or create new headers dict
+                            if "headers" not in entry:
+                                entry["headers"] = {}
+                            entry["headers"]["Authorization"] = f"Bearer {tokens.access_token}"
+                    except Exception as e:
+                        logging.warning(f"Failed to fetch OAuth token for {rec.name}: {e}")
                 adapter_map[rec.name] = entry
         return adapter_map
 
@@ -304,7 +307,7 @@ class MCP:
     async def connect_server(self, name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
         """
         Connect to a specific MCP server using FastMCP's client and return tools.
-        This uses the documented auth="oauth" pattern and returns tools for the frontend.
+        Conditionally uses OAuth2 authentication based on the requires_oauth2 field.
         """
         try:
             server = await MCPServer.objects.aget(name=name)
@@ -317,22 +320,30 @@ class MCP:
         if not server.url:
             return False, "Server URL is not configured", []
 
-        if FastMCPClient is None or OAuth is None:
+        if FastMCPClient is None:
             return False, "FastMCP client is not available", []
 
         try:
-            # Use FastMCP client with explicit scopes to match server grants ( works with scalekit.ai)
-            oauth = OAuth(
-                mcp_url=server.url,
-                client_name="Inspect MCP",
-                callback_port=8293,
-                # scopes=["openid", "email", "profile"],
-            )
-            print(f"OAuth: {oauth}")
-            async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
-                await asyncio.wait_for(client.ping(), timeout=30.0)
-                tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
-                print(f"Tools objs: {tools_objs}")
+            # Check if OAuth2 is required for this server
+            if server.requires_oauth2:
+                oauth = OAuth(
+                    mcp_url=server.url,
+                    client_name="Inspect MCP",
+                    callback_port=8293,
+                    # scopes=["openid", "email", "profile"],
+                )
+                print(f"OAuth: {oauth}")
+                async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
+                    await asyncio.wait_for(client.ping(), timeout=30.0)
+                    tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
+                    print(f"Tools objs: {tools_objs}")
+            else:
+                # Use FastMCP client without authentication
+                async with FastMCPClient(server.url) as client:  # type: ignore
+                    await asyncio.wait_for(client.ping(), timeout=30.0)
+                    tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
+                    print(f"Tools objs: {tools_objs}")
+
             # Convert tools for storage/GraphQL
             tools_info: List[Dict[str, Any]] = []
             for t in tools_objs:
@@ -345,17 +356,18 @@ class MCP:
             # Track connection state (no persistent client needed for now)
             self.connections[name] = {
                 "client": None,
-                "config": {"url": server.url, "oauth": oauth},
+                "config": {"url": server.url},
                 "tools": tools_objs,
             }
 
             # Persist tools for frontend consumption
+            success_message = "Connected successfully"
             server.connection_status = "CONNECTED"
             server.tools = tools_info
             
             await server.asave(update_fields=["connection_status", "tools", "updated_at"])
 
-            return True, "Connected successfully (OAuth)", tools_info
+            return True, success_message, tools_info
 
         except asyncio.TimeoutError:
             # Timeout while pinging or listing tools

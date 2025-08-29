@@ -46,6 +46,7 @@ class Query:
                     headers=server.headers,
                     query_params=server.query_params,
                     enabled=server.enabled,
+                    requires_oauth2=server.requires_oauth2,
                     connection_status=server.connection_status,
                     tools=tool_info_list,
                     updated_at=server.updated_at,
@@ -81,6 +82,7 @@ class Mutation:
         args: Optional[JSON] = None,
         headers: Optional[JSON] = None,
         query_params: Optional[JSON] = None,
+        requires_oauth2: Optional[bool] = False,
     ) -> MCPServerType:
         server = await mcp.asave_server(
             name=name,
@@ -90,6 +92,7 @@ class Mutation:
             args=args,
             headers=headers,
             query_params=query_params,
+            requires_oauth2=requires_oauth2,
         )
         return MCPServerType(
             id=server.id,
@@ -101,6 +104,7 @@ class Mutation:
             headers=server.headers,
             query_params=server.query_params,
             enabled=server.enabled,
+            requires_oauth2=server.requires_oauth2,
             connection_status="DISCONNECTED",
             tools=[],
             updated_at=server.updated_at,
@@ -127,6 +131,7 @@ class Mutation:
             headers=server.headers,
             query_params=server.query_params,
             enabled=server.enabled,
+            requires_oauth2=server.requires_oauth2,
             connection_status="DISCONNECTED",
             tools=[],
             updated_at=server.updated_at,
