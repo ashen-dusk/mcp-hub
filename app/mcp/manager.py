@@ -326,13 +326,13 @@ class MCP:
                 mcp_url=server.url,
                 client_name="Inspect MCP",
                 callback_port=8293,
-                # scopes=["openid", "email", "profile", "search:read", "trends:read", "transcripts:read", "analytics:read"],
+                # scopes=["openid", "email", "profile"],
             )
             print(f"OAuth: {oauth}")
             async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
-                await asyncio.wait_for(client.ping(), timeout=15.0)
-                tools_objs = await asyncio.wait_for(client.list_tools(), timeout=15.0)
-
+                await asyncio.wait_for(client.ping(), timeout=30.0)
+                tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
+                print(f"Tools objs: {tools_objs}")
             # Convert tools for storage/GraphQL
             tools_info: List[Dict[str, Any]] = []
             for t in tools_objs:
