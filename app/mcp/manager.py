@@ -330,6 +330,7 @@ class MCP:
                     mcp_url=server.url,
                     client_name="Inspect MCP",
                     callback_port=8293,
+                    scopes=[],
                     # scopes=["openid", "email", "profile"],
                 )
                 print(f"OAuth: {oauth}")
