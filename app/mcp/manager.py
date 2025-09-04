@@ -19,19 +19,6 @@ class EmptyArgsSchema(BaseModel):
     """An empty schema for tools that have no parameters."""
     pass
 
-def _safe_json_loads(s: Optional[str]) -> Optional[Any]:
-    if not s:
-        return None
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        try:
-            return ast.literal_eval(s)
-        except (ValueError, SyntaxError, MemoryError):
-            logging.warning(f"Could not parse JSON/literal string: {s}")
-            return None
-
-
 def _safe_json_dumps(obj: Any) -> str:
     """Safely serialize an object to JSON, handling non-serializable types."""
     def json_serializer(obj):
@@ -74,23 +61,26 @@ class MCP:
         tools_info: List[Dict[str, Any]] = []
         for tool in tools:
             schema_dict = {}
-
-            # A tool's schema should be on the `args_schema` attribute.
-            if hasattr(tool, "args_schema"):
+            
+            # Handle FastMCP tools (from connect_server)
+            if hasattr(tool, "inputSchema") and tool.inputSchema:
+                schema_dict = tool.inputSchema
+            elif hasattr(tool, "input_schema") and tool.input_schema:
+                schema_dict = tool.input_schema
+            # Handle LangChain MCP tools (from old client)
+            elif hasattr(tool, "args_schema"):
                 args_schema = tool.args_schema
-                # Case 1: It's a Pydantic model, so we call .schema() to generate the dict.
                 if hasattr(args_schema, "schema") and callable(args_schema.schema):
                     try:
                         schema_dict = args_schema.schema()
                     except Exception:
                         pass
-                # Case 2: It's already a dictionary.
                 elif isinstance(args_schema, dict):
                     schema_dict = args_schema
 
             tool_info = {
                 "name": getattr(tool, 'name', str(tool)),
-                "description": getattr(tool, 'description', ''),
+                "description": getattr(tool, 'description', '') or '',
                 "schema": _safe_json_dumps(schema_dict) if schema_dict else "{}",
             }
             tools_info.append(tool_info)
@@ -314,8 +304,8 @@ class MCP:
         except MCPServer.DoesNotExist:
             return False, "Server not found", []
 
-        if not server.enabled:
-            return False, "Server is disabled", []
+        # if not server.enabled:
+        #     return False, "Server is disabled", []
 
         if not server.url:
             return False, "Server URL is not configured", []
@@ -348,10 +338,17 @@ class MCP:
             # Convert tools for storage/GraphQL
             tools_info: List[Dict[str, Any]] = []
             for t in tools_objs:
+                # Extract the inputSchema from FastMCP tool objects
+                schema_dict = {}
+                if hasattr(t, "inputSchema") and t.inputSchema:
+                    schema_dict = t.inputSchema
+                elif hasattr(t, "input_schema") and t.input_schema:
+                    schema_dict = t.input_schema
+                
                 tools_info.append({
                     "name": getattr(t, "name", str(t)),
-                    "description": getattr(t, "description", ""),
-                    "schema": "{}",
+                    "description": getattr(t, "description", "") or "",
+                    "schema": _safe_json_dumps(schema_dict) if schema_dict else "{}",
                 })
 
             # Track connection state (no persistent client needed for now)
@@ -373,6 +370,7 @@ class MCP:
         except asyncio.TimeoutError:
             # Timeout while pinging or listing tools
             try:
+                print(f"Connection timeout", e)
                 server.connection_status = "FAILED"
                 server.tools = []
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])
@@ -382,6 +380,7 @@ class MCP:
         except Exception as e:
             # Update state and report the error message
             try:
+                print(f"Connection failed: {str(e)}")
                 server.connection_status = "FAILED"
                 server.tools = []
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])

@@ -7,7 +7,7 @@ from strawberry.scalars import JSON
 @strawberry.type
 class ToolInfo:
     name: str
-    description: str
+    description: Optional[str]
     schema: JSON
 
 @strawberry.type
@@ -18,8 +18,6 @@ class MCPServerType:
     url: Optional[str]
     command: Optional[str]
     args: Optional[JSON]
-    headers: Optional[JSON]
-    query_params: Optional[JSON]
     enabled: bool
     requires_oauth2: bool
     connection_status: str

@@ -18,52 +18,34 @@ from app.mcp.types import (
 # ── graphql: query ───────────────────────────────────────────────────────────
 class Query:
     @strawberry.field
-    # .. field: mcp_servers
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
-        mcp_servers = await mcp.alist_servers()
-        result: List[MCPServerType] = []
-        for server in mcp_servers:
-            # :: convert tools to ToolInfo objects
-            tool_info_list = []
-            if server.tools:
-                for tool in server.tools:
-                    tool_info_list.append(
-                        ToolInfo(
-                            name=tool["name"],
-                            description=tool["description"],
-                            schema=tool["schema"],
-                        )
-                    )
-            
-            result.append(
-                MCPServerType(
-                    id=server.id,
-                    name=server.name,
-                    transport=server.transport,
-                    url=server.url,
-                    command=server.command,
-                    args=server.args,
-                    headers=server.headers,
-                    query_params=server.query_params,
-                    enabled=server.enabled,
-                    requires_oauth2=server.requires_oauth2,
-                    connection_status=server.connection_status,
-                    tools=tool_info_list,
-                    updated_at=server.updated_at,
-                )
+        servers = await mcp.alist_servers()
+        return [
+            MCPServerType(
+                id=server.id,
+                name=server.name,
+                transport=server.transport,
+                url=server.url,
+                command=server.command,
+                args=server.args,
+                enabled=server.enabled,
+                requires_oauth2=server.requires_oauth2,
+                connection_status=server.connection_status,
+                tools=[
+                    ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"])
+                    for t in server.tools or []
+                ],
+                updated_at=server.updated_at,
             )
-        return result
+            for server in servers
+        ]
 
     @strawberry.field
-    # .. field: mcp_server_health
     async def mcp_server_health(self, info: Info, name: str) -> ServerHealthInfo:
         status, tools = await mcp.acheck_server_health(name)
-        tool_info_list = [
-            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
-        ]
         return ServerHealthInfo(
             status=status,
-            tools=tool_info_list,
+            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
         )
 
 
@@ -71,42 +53,24 @@ class Query:
 # ── graphql: mutation ────────────────────────────────────────────────────────
 class Mutation:
     @strawberry.mutation
-    # .. mutation: save_mcp_server
     async def save_mcp_server(
-        self,
-        info: Info,
-        name: str,
-        transport: str,
-        url: Optional[str] = None,
-        command: Optional[str] = None,
-        args: Optional[JSON] = None,
-        headers: Optional[JSON] = None,
-        query_params: Optional[JSON] = None,
-        requires_oauth2: Optional[bool] = False,
+        self, info: Info, name: str, transport: str,
+        url: Optional[str] = None, command: Optional[str] = None,
+        args: Optional[JSON] = None, headers: Optional[JSON] = None,
+        query_params: Optional[JSON] = None, requires_oauth2: Optional[bool] = False,
     ) -> MCPServerType:
-        server = await mcp.asave_server(
-            name=name,
-            transport=transport,
-            url=url,
-            command=command,
-            args=args,
-            headers=headers,
-            query_params=query_params,
-            requires_oauth2=requires_oauth2,
-        )
+        server = await mcp.asave_server(name, transport, url, command, args, headers, query_params, requires_oauth2)
         return MCPServerType(
-            id=server.id,
-            name=server.name,
-            transport=server.transport,
+            id=server.id, 
+            name=server.name, 
+            transport=server.transport, 
             url=server.url,
-            command=server.command,
-            args=server.args,
-            headers=server.headers,
-            query_params=server.query_params,
+            command=server.command, 
+            args=server.args, 
             enabled=server.enabled,
-            requires_oauth2=server.requires_oauth2,
+            requires_oauth2=server.requires_oauth2, 
             connection_status="DISCONNECTED",
-            tools=[],
+            tools=[], 
             updated_at=server.updated_at,
         )
 
@@ -116,49 +80,31 @@ class Mutation:
         return await mcp.aremove_server(name)
 
     @strawberry.mutation
-    # .. mutation: set_mcp_server_enabled
-    async def set_mcp_server_enabled(
-        self, info: Info, name: str, enabled: bool
-    ) -> MCPServerType:
+    async def set_mcp_server_enabled(self, info: Info, name: str, enabled: bool) -> MCPServerType:
         server = await mcp.aet_server_enabled(name=name, enabled=enabled)
         return MCPServerType(
-            id=server.id,
-            name=server.name,
-            transport=server.transport,
+            id=server.id, 
+            name=server.name, 
+            transport=server.transport, 
             url=server.url,
-            command=server.command,
-            args=server.args,
-            headers=server.headers,
-            query_params=server.query_params,
+            command=server.command, 
+            args=server.args, 
             enabled=server.enabled,
-            requires_oauth2=server.requires_oauth2,
+            requires_oauth2=server.requires_oauth2, 
             connection_status="DISCONNECTED",
-            tools=[],
+            tools=server.tools, 
             updated_at=server.updated_at,
         )
 
     @strawberry.mutation
-    # .. mutation: connect_mcp_server
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
         success, message, tools = await mcp.connect_server(name)
-        tool_info_list = [
-            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
-        ]
-        
-        # :: determine connection status and message
-        if success:
-            connection_status = "CONNECTED"
-            final_message = f"Successfully connected to {name}"
-        else:
-            connection_status = "FAILED"
-            final_message = message
-        
         return ConnectionResult(
             success=success,
-            message=final_message,
-            tools=tool_info_list,
+            message=f"Successfully connected to {name}" if success else message,
+            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
             server_name=name,
-            connection_status=connection_status,
+            connection_status="CONNECTED" if success else "FAILED",
         )
 
     @strawberry.mutation
@@ -171,20 +117,13 @@ class Mutation:
         )
 
     @strawberry.mutation
-    # .. mutation: restart_mcp_server
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
         status, tools = await mcp.acheck_server_health(name)
-        tool_info_list = [
-            ToolInfo(name=t["name"], description=t["description"], schema=t["schema"]) for t in tools
-        ]
-        connection_status = "CONNECTED" if status == "OK" else "FAILED"
-        final_message = (
-            f"Successfully restarted {name}" if status == "OK" else f"restart failed: {status}"
-        )
+        success = status == "OK"
         return ConnectionResult(
-            success=(status == "OK"),
-            message=final_message,
-            tools=tool_info_list,
+            success=success,
+            message=f"Successfully restarted {name}" if success else f"restart failed: {status}",
+            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
             server_name=name,
-            connection_status=connection_status,
+            connection_status="CONNECTED" if success else "FAILED",
         )
