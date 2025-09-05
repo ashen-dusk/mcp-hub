@@ -1,7 +1,10 @@
 import strawberry
+from strawberry import auto, ID
+import strawberry_django
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from strawberry.scalars import JSON
+from .models import MCPServer
 
 # ── graphql: types ────────────────────────────────────────────────────────────
 @strawberry.type
@@ -10,9 +13,19 @@ class ToolInfo:
     description: Optional[str]
     schema: JSON
 
-@strawberry.type
+@strawberry_django.filter_type(MCPServer, lookups=True)
+class MCPServerFilter:
+    id: auto
+    name: auto
+    transport: auto
+    enabled: auto
+    requires_oauth2: auto
+    connection_status: auto
+    is_shared: auto
+
+@strawberry_django.type(MCPServer, filters=MCPServerFilter)
 class MCPServerType:
-    id: strawberry.ID
+    id: ID
     name: str
     transport: str
     url: Optional[str]
@@ -23,9 +36,10 @@ class MCPServerType:
     connection_status: str
     tools: List[ToolInfo]
     updated_at: datetime
+    owner: Optional[str] 
+    is_shared: bool
 
 @strawberry.type
-# .. type: ConnectionResult
 class ConnectionResult:
     success: bool
     message: str
@@ -34,13 +48,11 @@ class ConnectionResult:
     connection_status: str
 
 @strawberry.type
-# .. type: DisconnectResult
 class DisconnectResult:
     success: bool
     message: str
 
 @strawberry.type
-# .. type: ServerHealthInfo
 class ServerHealthInfo:
     status: str
     tools: List[ToolInfo]

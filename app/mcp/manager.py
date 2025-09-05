@@ -4,6 +4,7 @@ import logging
 import ast
 from typing import Dict, List, Optional, Any, Tuple
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from django.contrib.auth.models import User
 from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from django.utils import timezone
@@ -88,8 +89,7 @@ class MCP:
 
     async def alist_servers(self) -> List[MCPServer]:
         """Get all servers with connection status and tool information."""
-        servers = [s async for s in MCPServer.objects.all().order_by("name")]
-        
+        servers = [s async for s in MCPServer.objects.filter(is_shared=True).order_by("name")]
         # add connection status and tool info to each server
         for server in servers:
             # :: if server is live, get tools from the live connection
@@ -115,15 +115,19 @@ class MCP:
         self,
         name: str,
         transport: str,
+        owner: User,
         url: Optional[str] = None,
         command: Optional[str] = None,
         args: Optional[dict] = None,
         headers: Optional[dict] = None,
         query_params: Optional[dict] = None,
         requires_oauth2: Optional[bool] = False,
+        is_shared: Optional[bool] = False,
     ) -> MCPServer:
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
+            owner=owner,
+            is_shared=is_shared,
             defaults={
                 "transport": transport,
                 "url": url,
@@ -138,9 +142,13 @@ class MCP:
         await self.initialize_client()  # re-initialize on change
         return rec
 
-    async def aremove_server(self, name: str) -> bool:
+    async def aremove_server(self, name: str, user: User) -> bool:
         try:
-            rec = await MCPServer.objects.aget(name=name)
+            rec = await MCPServer.objects.filter(
+                    name=name,
+                    owner=user 
+            ).afirst()
+           
             if rec.url:
                 try:
                     storage = FileTokenStorage(server_url=rec.url)

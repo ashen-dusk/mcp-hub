@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 import uuid
 import shortuuid
 
@@ -24,10 +25,23 @@ class MCPServer(models.Model):
 
     # ── django: field ────────────────────────────────────────────────────────────
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     transport = models.CharField(max_length=32, choices=TRANSPORT_CHOICES)
     url = models.TextField(blank=True, null=True)
     command = models.TextField(blank=True, null=True)
+    
+    # User ownership and sharing
+    owner = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        help_text="User who owns this server. Null means it's a shared server."
+    )
+    is_shared = models.BooleanField(
+        default=False,
+        help_text="Whether this server is shared with all users"
+    )
     
     # json fields
     args = models.JSONField(default=dict, blank=True)
@@ -54,6 +68,18 @@ class MCPServer(models.Model):
     class Meta:
         db_table = "mcp_server"
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "name"], 
+                name="unique_server_name_per_user",
+                condition=models.Q(owner__isnull=False)
+            ),
+            models.UniqueConstraint(
+                fields=["name"], 
+                name="unique_shared_server_name",
+                condition=models.Q(is_shared=True)
+            ),
+        ]
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.name} ({self.transport})"
@@ -62,4 +88,22 @@ class MCPServer(models.Model):
         if not self.id:
             self.id = f"mcp_{shortuuid.uuid()}"
         super().save(*args, **kwargs)
+    
+    @property
+    def is_user_owned(self) -> bool:
+        """Check if this server is owned by a specific user."""
+        return self.owner is not None
+    
+    @property
+    def is_publicly_shared(self) -> bool:
+        """Check if this server is shared with all users."""
+        return self.is_shared
+    
+    def can_be_accessed_by(self, user: User) -> bool:
+        """Check if a user can access this server."""
+        if self.is_publicly_shared:
+            return True
+        if self.owner == user:
+            return True
+        return False
 
