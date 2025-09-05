@@ -36,6 +36,7 @@ class MCPServerType:
     connection_status: str
     tools: List[ToolInfo]
     updated_at: datetime
+    created_at: datetime
     owner: Optional[str] 
     is_public: bool
 
@@ -52,10 +53,6 @@ class DisconnectResult:
     success: bool
     message: str
 
-@strawberry.type
-class ServerHealthInfo:
-    status: str
-    tools: List[ToolInfo]
 
 
 

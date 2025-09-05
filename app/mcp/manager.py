@@ -269,8 +269,8 @@ class MCP:
             self.client = None
             self.tools = []
 
-    # .. op: acheck_server_health
-    async def acheck_server_health(self, name: str) -> tuple[str, list[dict[str, Any]]]:
+    # .. op: arestart_mcp_server
+    async def arestart_mcp_server(self, name: str) -> tuple[str, list[dict[str, Any]]]:
         """
         Check server health and return tools if healthy.
         
@@ -295,6 +295,8 @@ class MCP:
             adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
                 return "ERROR", []
+            
+            tools_info = []
             if server.requires_oauth2:
                async with FastMCPClient(server.url, auth=OAuth(mcp_url=server.url, client_name="Inspect MCP", callback_port=8293, scopes=[],)) as client:
                   await client.ping()

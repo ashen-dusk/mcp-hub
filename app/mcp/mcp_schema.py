@@ -13,7 +13,6 @@ from app.mcp.types import (
     ConnectionResult, 
     DisconnectResult, 
     ToolInfo,
-    ServerHealthInfo,
     JSON
 )
 
@@ -22,14 +21,6 @@ from app.mcp.types import (
 class Query:
     mcp_servers: List[MCPServerType] = strawberry_django.field(filters=MCPServerFilter)
 
-    @strawberry.field
-    async def mcp_server_health(self, info: Info, name: str) -> ServerHealthInfo:
-        status, tools = await mcp.acheck_server_health(name)
-        return ServerHealthInfo(
-            status=status,
-            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
-        )
-    
     @strawberry.field(permission_classes=[IsAuthenticated])
     async def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get only the user's own MCP servers."""
@@ -46,15 +37,9 @@ class Query:
                 enabled=server.enabled,
                 requires_oauth2=server.requires_oauth2,
                 connection_status=server.connection_status,
-                tools=[
-                    ToolInfo(
-                        name=t.get("name", ""), 
-                        description=t.get("description", ""), 
-                        schema=t.get("schema", "{}")
-                    )
-                    for t in (server.tools or [])
-                ],
+                tools=server.tools,
                 updated_at=server.updated_at,
+                created_at=server.created_at,
                 owner=server.owner.username if server.owner else None,
                 is_public=server.is_public,
             )
@@ -92,6 +77,7 @@ class Mutation:
             connection_status="DISCONNECTED",
             tools=[], 
             updated_at=server.updated_at,
+            created_at=server.created_at,
             owner=server.owner.username if server.owner else None,
             is_public=server.is_public,
         )
@@ -117,6 +103,7 @@ class Mutation:
             connection_status="DISCONNECTED",
             tools=server.tools, 
             updated_at=server.updated_at,
+            created_at=server.created_at,
             owner=server.owner.username if server.owner else None,
             is_public=server.is_public,
         )
@@ -142,7 +129,7 @@ class Mutation:
 
     @strawberry.mutation
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        status, tools = await mcp.acheck_server_health(name)
+        status, tools = await mcp.arestart_mcp_server(name)
         success = status == "OK"
         return ConnectionResult(
             success=success,
