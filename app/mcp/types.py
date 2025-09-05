@@ -34,24 +34,39 @@ class MCPServerType:
     enabled: bool
     requires_oauth2: bool
     connection_status: str
-    tools: List[ToolInfo]
     updated_at: datetime
     created_at: datetime
-    owner: Optional[str] 
     is_public: bool
+
+    @strawberry.field
+    def owner(self, root: MCPServer) -> Optional[str]:
+        return root.owner.username if root.owner else None
+
+    @strawberry.field
+    def tools(self, root: "MCPServer") -> List["ToolInfo"]:
+        """Resolve JSONField `tools` into a list of ToolInfo objects."""
+        return [
+            ToolInfo(
+                name=tool.get("name", ""),
+                description=tool.get("description", ""),
+                schema=tool.get("schema", "{}"),
+            )
+        for tool in (root.tools or [])
+        if isinstance(tool, dict)
+    ]
 
 @strawberry.type
 class ConnectionResult:
     success: bool
     message: str
-    tools: List[ToolInfo]
-    server_name: str
     connection_status: str
+    server: MCPServerType
 
 @strawberry.type
 class DisconnectResult:
     success: bool
     message: str
+    server: MCPServerType
 
 
 

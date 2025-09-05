@@ -25,27 +25,8 @@ class Query:
     async def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get only the user's own MCP servers."""
         user = info.context.request.user
-        servers = [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
-        return [
-            MCPServerType(
-                id=server.id,
-                name=server.name,
-                transport=server.transport,
-                url=server.url,
-                command=server.command,
-                args=server.args,
-                enabled=server.enabled,
-                requires_oauth2=server.requires_oauth2,
-                connection_status=server.connection_status,
-                tools=server.tools,
-                updated_at=server.updated_at,
-                created_at=server.created_at,
-                owner=server.owner.username if server.owner else None,
-                is_public=server.is_public,
-            )
-            for server in servers
-        ]
-    
+        return [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
+
 
 @strawberry.type
 # ── graphql: mutation ────────────────────────────────────────────────────────
@@ -61,27 +42,11 @@ class Mutation:
     ) -> MCPServerType:
         # get user from request context
         user = info.context.request.user
-        server = await mcp.asave_server(
+        return await mcp.asave_server(
             name, transport, user, url, command, args, headers, query_params, 
             requires_oauth2, is_public=is_public
         )
-        return MCPServerType(
-            id=server.id, 
-            name=server.name, 
-            transport=server.transport, 
-            url=server.url,
-            command=server.command, 
-            args=server.args, 
-            enabled=server.enabled,
-            requires_oauth2=server.requires_oauth2, 
-            connection_status="DISCONNECTED",
-            tools=[], 
-            updated_at=server.updated_at,
-            created_at=server.created_at,
-            owner=server.owner.username if server.owner else None,
-            is_public=server.is_public,
-        )
-
+        
     @strawberry.mutation(permission_classes=[IsAuthenticated])
     async def remove_mcp_server(self, info: Info, name: str) -> bool:
         # Get user from request context
@@ -90,52 +55,35 @@ class Mutation:
 
     @strawberry.mutation
     async def set_mcp_server_enabled(self, info: Info, name: str, enabled: bool) -> MCPServerType:
-        server = await mcp.aet_server_enabled(name=name, enabled=enabled)
-        return MCPServerType(
-            id=server.id, 
-            name=server.name, 
-            transport=server.transport, 
-            url=server.url,
-            command=server.command, 
-            args=server.args, 
-            enabled=server.enabled,
-            requires_oauth2=server.requires_oauth2, 
-            connection_status="DISCONNECTED",
-            tools=server.tools, 
-            updated_at=server.updated_at,
-            created_at=server.created_at,
-            owner=server.owner.username if server.owner else None,
-            is_public=server.is_public,
-        )
+        return await mcp.aet_server_enabled(name=name, enabled=enabled)
 
     @strawberry.mutation
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        success, message, tools = await mcp.connect_server(name)
+        success, message, server = await mcp.connect_server(name)
         return ConnectionResult(
             success=success,
             message=f"Successfully connected to {name}" if success else message,
-            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
-            server_name=name,
             connection_status="CONNECTED" if success else "FAILED",
+            server=server,
         )
 
     @strawberry.mutation
     async def disconnect_mcp_server(self, info: Info, name: str) -> DisconnectResult:
-        success, message = await mcp.disconnect_server(name)
+        success, message, server = await mcp.disconnect_server(name)
         return DisconnectResult(
             success=success,
             message=message,
+            server=server,
         )
 
     @strawberry.mutation
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        status, tools = await mcp.arestart_mcp_server(name)
+        status, server = await mcp.arestart_mcp_server(name)
         success = status == "OK"
         return ConnectionResult(
             success=success,
             message=f"Successfully restarted {name}" if success else f"restart failed: {status}",
-            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
-            server_name=name,
             connection_status="CONNECTED" if success else "FAILED",
+            server=server,
         )
     

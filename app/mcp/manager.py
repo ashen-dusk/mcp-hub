@@ -270,7 +270,7 @@ class MCP:
             self.tools = []
 
     # .. op: arestart_mcp_server
-    async def arestart_mcp_server(self, name: str) -> tuple[str, list[dict[str, Any]]]:
+    async def arestart_mcp_server(self, name: str) -> tuple[str, Optional[MCPServer]]:
         """
         Check server health and return tools if healthy.
         
@@ -279,22 +279,22 @@ class MCP:
         """
         try:
             server = await MCPServer.objects.aget(name=name)
-            if server.url:
+            if server.url and server.requires_oauth2:
                 try:
                     storage = FileTokenStorage(server_url=server.url)
                     await storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
         except MCPServer.DoesNotExist:
-            return "NOT_FOUND", []
+            return "NOT_FOUND", None
 
         if not server.enabled:
-            return "DISABLED", []
+            return "DISABLED", server
          
         try:
             adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
-                return "ERROR", []
+                return "ERROR", server
             
             tools_info = []
             if server.requires_oauth2:
@@ -314,15 +314,19 @@ class MCP:
                 "config": {"url": server.url},
                 "tools": tools,
             }
-            return "OK", tools_info
+            server.tools = tools_info
+            server.connection_status = "CONNECTED"
+            await server.asave(update_fields=["connection_status", "tools", "updated_at"])
+            return "OK", server
         except asyncio.TimeoutError:
-            return "TIMEOUT", []
+            return "TIMEOUT", server
         except Exception as e:
+            print(f"Health check for {name} failed: {e}")
             logging.warning(f"Health check for {name} failed: {e}")
-            return "ERROR", []  
+            return "ERROR", server  
 
     # .. op: connect_server
-    async def connect_server(self, name: str) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    async def connect_server(self, name: str) -> Tuple[bool, str, Optional[MCPServer]]:
         """
         Connect to a specific MCP server using FastMCP's client and return tools.
         Conditionally uses OAuth2 authentication based on the requires_oauth2 field.
@@ -330,16 +334,16 @@ class MCP:
         try:
             server = await MCPServer.objects.aget(name=name)
         except MCPServer.DoesNotExist:
-            return False, "Server not found", []
+            return False, "Server not found", None
 
         # if not server.enabled:
         #     return False, "Server is disabled", []
 
         if not server.url:
-            return False, "Server URL is not configured", []
+            return False, "Server URL is not configured", server
 
         if FastMCPClient is None:
-            return False, "FastMCP client is not available", []
+            return False, "FastMCP client is not available", server
 
         try:
             # Check if OAuth2 is required for this server
@@ -380,7 +384,7 @@ class MCP:
             
             await server.asave(update_fields=["connection_status", "tools", "updated_at"])
 
-            return True, success_message, tools_info
+            return True, success_message, server
 
         except asyncio.TimeoutError:
             # Timeout while pinging or listing tools
@@ -391,7 +395,7 @@ class MCP:
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])
             except Exception:
                 pass
-            return False, "Connection timeout", []
+            return False, "Connection timeout", server
         except Exception as e:
             # Update state and report the error message
             try:
@@ -401,19 +405,25 @@ class MCP:
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])
             except Exception:
                 pass
-            return False, f"Connection failed: {str(e)}", []
+            return False, f"Connection failed: {str(e)}", server
 
     # .. op: disconnect_server
-    async def disconnect_server(self, name: str) -> Tuple[bool, str]:
+    async def disconnect_server(self, name: str) -> Tuple[bool, str, Optional[MCPServer]]:
         """
         Disconnect from a specific MCP server.
         
         Returns:
-            Tuple of (success: bool, status_message: str)
+            Tuple of (success: bool, status_message: str, server: MCPServer)
         """
         try:
+            # Get the server object first
+            try:
+                server = await MCPServer.objects.aget(name=name)
+            except MCPServer.DoesNotExist:
+                return False, "Server not found", None
+                
             if name not in self.connections:
-                return False, "Server not connected"
+                return False, "Server not connected", server
             
             # get the client and close it if it has a close method
             server_info = self.connections[name]
@@ -445,18 +455,22 @@ class MCP:
 
             # :: update server status in the database
             try:
-                server = await MCPServer.objects.aget(name=name)
                 server.connection_status = "DISCONNECTED"
                 server.tools = []
                 await server.asave(update_fields=["connection_status", "tools", "updated_at"])
-            except MCPServer.DoesNotExist:
-                pass  # Or log a warning
+            except Exception as e:
+                logging.warning(f"Error updating server status: {e}")
 
-            return True, "Disconnected successfully"
+            return True, "Disconnected successfully", server
             
         except Exception as e:
             logging.exception(f"Failed to disconnect from server {name}: {e}")
-            return False, f"Disconnect failed: {str(e)}"
+            # Try to get server for error response
+            try:
+                server = await MCPServer.objects.aget(name=name)
+                return False, f"Disconnect failed: {str(e)}", server
+            except MCPServer.DoesNotExist:
+                return False, f"Disconnect failed: {str(e)}", None
 
     def get_client(self) -> Optional[MultiServerMCPClient]:
         return self.client
