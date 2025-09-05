@@ -20,9 +20,9 @@ class MCPServerAdminForm(forms.ModelForm):
 @admin.register(MCPServer)
 class MCPServerAdmin(admin.ModelAdmin):
     form = MCPServerAdminForm
-    list_display = ("name", "transport", "enabled", "connection_status", "is_shared", "updated_at")
+    list_display = ("name", "transport", "enabled", "connection_status", "is_public", "updated_at")
     search_fields = ("name", "transport")
-    list_filter = ("transport", "enabled", "connection_status", "is_shared")
+    list_filter = ("transport", "enabled", "connection_status", "is_public")
     readonly_fields = ("id", "created_at", "updated_at")
 
 

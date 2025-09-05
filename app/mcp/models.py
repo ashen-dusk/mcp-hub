@@ -38,9 +38,9 @@ class MCPServer(models.Model):
         blank=True,
         help_text="User who owns this server. Null means it's a shared server."
     )
-    is_shared = models.BooleanField(
+    is_public = models.BooleanField(
         default=False,
-        help_text="Whether this server is shared with all users"
+        help_text="Whether this server is public and available to all users"
     )
     
     # json fields
@@ -77,7 +77,7 @@ class MCPServer(models.Model):
             models.UniqueConstraint(
                 fields=["name"], 
                 name="unique_shared_server_name",
-                condition=models.Q(is_shared=True)
+                condition=models.Q(is_public=True)
             ),
         ]
 
@@ -95,13 +95,13 @@ class MCPServer(models.Model):
         return self.owner is not None
     
     @property
-    def is_publicly_shared(self) -> bool:
-        """Check if this server is shared with all users."""
-        return self.is_shared
+    def is_publicly_available(self) -> bool:
+        """Check if this server is public and available to all users."""
+        return self.is_public
     
     def can_be_accessed_by(self, user: User) -> bool:
         """Check if a user can access this server."""
-        if self.is_publicly_shared:
+        if self.is_publicly_available:
             return True
         if self.owner == user:
             return True

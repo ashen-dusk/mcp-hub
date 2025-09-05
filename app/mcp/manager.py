@@ -89,7 +89,7 @@ class MCP:
 
     async def alist_servers(self) -> List[MCPServer]:
         """Get all servers with connection status and tool information."""
-        servers = [s async for s in MCPServer.objects.filter(is_shared=True).order_by("name")]
+        servers = [s async for s in MCPServer.objects.filter(is_public=True).order_by("name")]
         # add connection status and tool info to each server
         for server in servers:
             # :: if server is live, get tools from the live connection
@@ -122,12 +122,12 @@ class MCP:
         headers: Optional[dict] = None,
         query_params: Optional[dict] = None,
         requires_oauth2: Optional[bool] = False,
-        is_shared: Optional[bool] = False,
+        is_public: Optional[bool] = False,
     ) -> MCPServer:
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
             owner=owner,
-            is_shared=is_shared,
+            is_public=is_public,
             defaults={
                 "transport": transport,
                 "url": url,
@@ -279,21 +279,39 @@ class MCP:
         """
         try:
             server = await MCPServer.objects.aget(name=name)
+            if server.url:
+                try:
+                    storage = FileTokenStorage(server_url=server.url)
+                    await storage.clear()
+                except Exception as e:
+                    logging.warning(f"Failed to clear tokens for {name}: {e}")
         except MCPServer.DoesNotExist:
             return "NOT_FOUND", []
 
         if not server.enabled:
             return "DISABLED", []
-
+         
         try:
             adapter_map = await self._build_adapter_map(names=[name])
             if name not in adapter_map:
                 return "ERROR", []
-            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=5.0)
-            tools = self._patch_tools_schema(raw_tools)
-            # Convert tools to serializable format
-            tools_info = self._serialize_tools(tools)
-
+            if server.requires_oauth2:
+               async with FastMCPClient(server.url, auth=OAuth(mcp_url=server.url, client_name="Inspect MCP", callback_port=8293, scopes=[],)) as client:
+                  await client.ping()
+                  raw_tools = await client.list_tools()
+                  tools = self._patch_tools_schema(raw_tools)
+                  tools_info = self._serialize_tools(tools)
+            else:
+                async with FastMCPClient(server.url) as client:
+                    await client.ping()
+                    raw_tools = await client.list_tools()
+                    tools = self._patch_tools_schema(raw_tools)
+                    tools_info = self._serialize_tools(tools)
+            self.connections[name] = {
+                "client": None,
+                "config": {"url": server.url},
+                "tools": tools,
+            }
             return "OK", tools_info
         except asyncio.TimeoutError:
             return "TIMEOUT", []
@@ -343,22 +361,9 @@ class MCP:
                     tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
                     print(f"Tools objs: {tools_objs}")
 
-            # Convert tools for storage/GraphQL
-            tools_info: List[Dict[str, Any]] = []
-            for t in tools_objs:
-                # Extract the inputSchema from FastMCP tool objects
-                schema_dict = {}
-                if hasattr(t, "inputSchema") and t.inputSchema:
-                    schema_dict = t.inputSchema
-                elif hasattr(t, "input_schema") and t.input_schema:
-                    schema_dict = t.input_schema
-                
-                tools_info.append({
-                    "name": getattr(t, "name", str(t)),
-                    "description": getattr(t, "description", "") or "",
-                    "schema": _safe_json_dumps(schema_dict) if schema_dict else "{}",
-                })
-
+            # convert tools for storage/GraphQL
+            tools = self._patch_tools_schema(tools_objs)
+            tools_info = self._serialize_tools(tools)
             # Track connection state (no persistent client needed for now)
             self.connections[name] = {
                 "client": None,

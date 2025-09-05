@@ -21,7 +21,7 @@ class MCPServerFilter:
     enabled: auto
     requires_oauth2: auto
     connection_status: auto
-    is_shared: auto
+    is_public: auto
 
 @strawberry_django.type(MCPServer, filters=MCPServerFilter)
 class MCPServerType:
@@ -37,7 +37,7 @@ class MCPServerType:
     tools: List[ToolInfo]
     updated_at: datetime
     owner: Optional[str] 
-    is_shared: bool
+    is_public: bool
 
 @strawberry.type
 class ConnectionResult:

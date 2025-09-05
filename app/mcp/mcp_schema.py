@@ -34,7 +34,7 @@ class Query:
     async def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get only the user's own MCP servers."""
         user = info.context.request.user
-        servers = [s async for s in MCPServer.objects.filter(owner=user).order_by("name")]
+        servers = [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
         return [
             MCPServerType(
                 id=server.id,
@@ -52,7 +52,7 @@ class Query:
                 ],
                 updated_at=server.updated_at,
                 owner=server.owner.username if server.owner else None,
-                is_shared=server.is_shared,
+                is_public=server.is_public,
             )
             for server in servers
         ]
@@ -68,13 +68,13 @@ class Mutation:
         url: Optional[str] = None, command: Optional[str] = None,
         args: Optional[JSON] = None, headers: Optional[JSON] = None,
         query_params: Optional[JSON] = None, requires_oauth2: Optional[bool] = False,
-        is_shared: Optional[bool] = False,
+        is_public: Optional[bool] = False,
     ) -> MCPServerType:
         # get user from request context
         user = info.context.request.user
         server = await mcp.asave_server(
-            name, transport, url, command, args, headers, query_params, 
-            requires_oauth2, user=user, is_shared=is_shared
+            name, transport, user, url, command, args, headers, query_params, 
+            requires_oauth2, is_public=is_public
         )
         return MCPServerType(
             id=server.id, 
@@ -89,7 +89,7 @@ class Mutation:
             tools=[], 
             updated_at=server.updated_at,
             owner=server.owner.username if server.owner else None,
-            is_shared=server.is_shared,
+            is_public=server.is_public,
         )
 
     @strawberry.mutation(permission_classes=[IsAuthenticated])
@@ -114,7 +114,7 @@ class Mutation:
             tools=server.tools, 
             updated_at=server.updated_at,
             owner=server.owner.username if server.owner else None,
-            is_shared=server.is_shared,
+            is_public=server.is_public,
         )
 
     @strawberry.mutation
