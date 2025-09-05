@@ -27,7 +27,7 @@ class Query:
         status, tools = await mcp.acheck_server_health(name)
         return ServerHealthInfo(
             status=status,
-            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
+            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
         )
     
     @strawberry.field(permission_classes=[IsAuthenticated])
@@ -47,8 +47,12 @@ class Query:
                 requires_oauth2=server.requires_oauth2,
                 connection_status=server.connection_status,
                 tools=[
-                    ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"])
-                    for t in server.tools or []
+                    ToolInfo(
+                        name=t.get("name", ""), 
+                        description=t.get("description", ""), 
+                        schema=t.get("schema", "{}")
+                    )
+                    for t in (server.tools or [])
                 ],
                 updated_at=server.updated_at,
                 owner=server.owner.username if server.owner else None,
@@ -123,7 +127,7 @@ class Mutation:
         return ConnectionResult(
             success=success,
             message=f"Successfully connected to {name}" if success else message,
-            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
+            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
             server_name=name,
             connection_status="CONNECTED" if success else "FAILED",
         )
@@ -143,7 +147,7 @@ class Mutation:
         return ConnectionResult(
             success=success,
             message=f"Successfully restarted {name}" if success else f"restart failed: {status}",
-            tools=[ToolInfo(name=t["name"], description=t.get("description") or "", schema=t["schema"]) for t in tools],
+            tools=[ToolInfo(name=t.get("name", ""), description=t.get("description", ""), schema=t.get("schema", "{}")) for t in tools],
             server_name=name,
             connection_status="CONNECTED" if success else "FAILED",
         )
