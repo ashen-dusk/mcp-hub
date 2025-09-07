@@ -139,3 +139,6 @@ CORS_ALLOWED_ORIGINS = [
 CSRF_TRUSTED_ORIGINS = [
     os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
 ]
+
+# Redis configuration for MCP connection state
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')

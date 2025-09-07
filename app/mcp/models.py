@@ -106,4 +106,3 @@ class MCPServer(models.Model):
         if self.owner == user:
             return True
         return False
-
