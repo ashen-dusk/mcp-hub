@@ -24,7 +24,6 @@ def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
     
     # If user is authenticated, return user
     if user and not isinstance(user, AnonymousUser) and user.is_authenticated:
-        print(f"[DEBUG] Authenticated user: {user.username}")
         return user, None
     
     # For anonymous users, create a unique session key based on request characteristics
@@ -37,8 +36,6 @@ def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
     session_identifier = f"{ip}_{user_agent}_{forwarded_for}"
     session_key = f"anon_{hash(session_identifier)}"
     
-    print(f"[DEBUG] Anonymous session key: {session_key}")
-    print(f"[DEBUG] Final context - user: {user}, session_key: {session_key}")
     return None, session_key
 
 @strawberry.type

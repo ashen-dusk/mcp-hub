@@ -141,4 +141,4 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # Redis configuration for MCP connection state
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_URL = os.getenv('REDIS_URL', 'redis://default:3fI4SySk9LKUUC4ICqzlMSkVMMFBRJ3Z@redis-16801.c212.ap-south-1-1.ec2.redns.redis-cloud.com:16801')

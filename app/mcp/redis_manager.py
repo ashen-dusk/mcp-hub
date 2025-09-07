@@ -35,12 +35,36 @@ def _safe_json_dumps(obj: Any) -> str:
 
 class MCPRedisManager:
     def __init__(self, redis_url: str = None):
-        self.redis_client = redis.from_url(redis_url or getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0'))
+        redis_url = redis_url or getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
+        
+        # For Redis Cloud, try different connection methods
+        if 'redis-cloud.com' in redis_url:
+            try:
+                # Method 1: Try with SSL disabled
+                from urllib.parse import urlparse
+                parsed = urlparse(redis_url)
+                self.redis_client = redis.Redis(
+                    host=parsed.hostname,
+                    port=parsed.port,
+                    password=parsed.password,
+                    decode_responses=True,
+                    ssl=False
+                )
+                print(f"[DEBUG] Redis Cloud connection created (SSL disabled)")
+            except Exception as e:
+                print(f"[DEBUG] Redis Cloud connection failed: {e}")
+                # Method 2: Try standard URL
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                print(f"[DEBUG] Redis Cloud connection created (standard URL)")
+        else:
+            # For local Redis
+            self.redis_client = redis.from_url(redis_url, decode_responses=True)
+            print(f"[DEBUG] Local Redis connection created")
+        
         self.connection_ttl = 86400  # 24 hours TTL for connections
     
     async def _get_redis_key_prefix(self, user: Optional[User] = None, session_key: Optional[str] = None) -> str:
         """Get the Redis key prefix for user or session."""
-        print(f"[DEBUG] Redis manager - user: {user}, session_key: {session_key}")
         if user:
             return f"mcp:user:{user.id}"
         elif session_key:
@@ -62,7 +86,7 @@ class MCPRedisManager:
         """Get connection status for a server."""
         keys = await self._get_server_keys(server_name, user, session_key)
         status = await self.redis_client.get(keys["status"])
-        return status.decode() if status else "DISCONNECTED"
+        return status if status else "DISCONNECTED"
     
     async def get_connection_tools(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> List[Dict]:
         """Get tools for a server connection."""
@@ -70,7 +94,7 @@ class MCPRedisManager:
         tools_json = await self.redis_client.get(keys["tools"])
         if tools_json:
             try:
-                return json.loads(tools_json.decode())
+                return json.loads(tools_json)
             except json.JSONDecodeError:
                 return []
         return []
@@ -100,7 +124,7 @@ class MCPRedisManager:
         prefix = await self._get_redis_key_prefix(user, session_key)
         connections_key = f"{prefix}:connections"
         connections = await self.redis_client.smembers(connections_key)
-        return [conn.decode() for conn in connections]
+        return list(connections) if connections else []
     
     async def disconnect_all_servers(self, user: Optional[User] = None, session_key: Optional[str] = None):
         """Disconnect all servers for a user/session."""
@@ -112,7 +136,7 @@ class MCPRedisManager:
         
         # Disconnect each server
         for server_name in connections:
-            await self.set_connection_status(server_name.decode(), "DISCONNECTED", user=user, session_key=session_key)
+            await self.set_connection_status(server_name, "DISCONNECTED", user=user, session_key=session_key)
     
     async def cleanup_expired_connections(self):
         """Clean up expired connections (called periodically)."""
