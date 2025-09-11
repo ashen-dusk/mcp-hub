@@ -9,6 +9,11 @@ sdk = CopilotKitRemoteEndpoint(
                 "This agent is used to answer questions and perform tasks using the MCP servers."
             ),
             graph=graph,
+            langgraph_config={
+                "configurable": {
+                    "copilotkit_auth": context["properties"].get("authorization")
+                }
+            }
         ),
     ],
 )

@@ -47,7 +47,16 @@ class MCP:
     
     async def _get_connection_status(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> str:
         """Get connection status from Redis."""
-        return await mcp_redis.get_connection_status(server_name, user, session_key)
+        connection_status = await mcp_redis.get_connection_status(server_name, user, session_key)
+        server = await MCPServer.objects.aget(name=server_name)
+        print(f"DEBUG: connection_status and server in _get_connection_status: {connection_status} {server.name}")
+        if connection_status == "CONNECTED":
+            self.connections[server_name] = {
+                "client": None,
+                "config": {"url": server.url},
+                # "tools": tools_objs,
+            }
+        return connection_status
     
     async def _get_connection_tools(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> List[Dict]:
         """Get connection tools from Redis."""
@@ -262,7 +271,9 @@ class MCP:
     async def initialize_client(self):
         # Restrict adapter map to only explicitly connected servers
         connected_names = list(self.connections.keys())
+        print(f"DEBUG: connected_names in initialize_client: {connected_names}")
         self.adapter_map = await self._build_adapter_map(names=connected_names)
+        print(f"DEBUG: adapter_map in initialize_client: {self.adapter_map}")
         if not self.adapter_map:
             self.client = None
             self.tools = []
