@@ -6,3 +6,4 @@ class AgentState(MessagesState):
 
     model: Optional[str] = "openai"
     status: Optional[str] = None
+    sessionId: Optional[str] = None

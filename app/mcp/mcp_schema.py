@@ -41,10 +41,13 @@ def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
 @strawberry.type
 # ── graphql: query ───────────────────────────────────────────────────────────
 class Query:
+    mcp_server_query: List[MCPServerType] = strawberry_django.field(filters=MCPServerFilter)
+
     @strawberry.field
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get all public MCP servers with user/session-specific connection states."""
         user, session_key = _get_user_context(info)
+        print(f"DEBUG: user in mcp_servers: {user}")
         servers = await mcp.alist_servers(user=user, session_key=session_key)
         return servers
 
