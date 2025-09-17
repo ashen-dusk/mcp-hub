@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from langgraph.graph import MessagesState
 
 class AgentState(MessagesState):
@@ -7,3 +7,4 @@ class AgentState(MessagesState):
     model: Optional[str] = "openai"
     status: Optional[str] = None
     sessionId: Optional[str] = None
+    tool_calls: Optional[Any] = None
