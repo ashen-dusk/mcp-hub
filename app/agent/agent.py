@@ -13,7 +13,8 @@ from langgraph.prebuilt import ToolNode
 
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
-    tools = await get_tools()
+    sessionId = state.get("sessionId", None)
+    tools = await get_tools(sessionId=sessionId)
     print(f"DEBUG: async_tool_node: {tools}")
     return ToolNode(tools)
 

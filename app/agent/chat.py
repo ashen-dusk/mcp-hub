@@ -26,8 +26,9 @@ def search_web(query: str) -> str:
     search = TavilySearch(max_results=3)
     return search.invoke(query)
 
-async def get_tools(sessionId: Optional[str]):
+async def get_tools(sessionId: Optional[str]=None):
     tools_list = [get_current_datetime]
+    # sessionId = 'html78910'
     # get tools from MCP manager scoped to user/session
     try:
         mcp_tools = await mcp.aget_tools(session_id=sessionId)
@@ -40,8 +41,10 @@ async def get_tools(sessionId: Optional[str]):
 
 async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
-
+    # sessionId = config["configurable"].get("copilotkit_auth")
     sessionId = state.get("sessionId", None)
+    print('chat_node: sessionId in chat_node', sessionId)
+    print(state, 'state in chat_node')
     tools = await get_tools(sessionId=sessionId)
     # user_id = state.get("user_id", None)
     # toolkit_names = state.get("toolkit", [])
