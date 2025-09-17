@@ -24,7 +24,7 @@ def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
     
     # If user is authenticated, return user
     if user and not isinstance(user, AnonymousUser) and user.is_authenticated:
-        return user, None
+        return user
     
     # For anonymous users, create a unique session key based on request characteristics
     # This avoids Django session creation in async context
@@ -36,7 +36,7 @@ def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
     session_identifier = f"{ip}_{user_agent}_{forwarded_for}"
     session_key = f"anon_{hash(session_identifier)}"
     
-    return None, session_key
+    return session_key
 
 @strawberry.type
 # ── graphql: query ───────────────────────────────────────────────────────────
@@ -46,9 +46,9 @@ class Query:
     @strawberry.field
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get all public MCP servers with user/session-specific connection states."""
-        user, session_key = _get_user_context(info)
-        print(f"DEBUG: user in mcp_servers: {user}")
-        servers = await mcp.alist_servers(user=user, session_key=session_key)
+        session_key = _get_user_context(info)
+        print(f"DEBUG: user in mcp_servers: {session_key}")
+        servers = await mcp.alist_servers(session_id=session_key)
         return servers
 
     @strawberry.field(permission_classes=[IsAuthenticated])
@@ -85,13 +85,13 @@ class Mutation:
 
     @strawberry.mutation
     async def set_mcp_server_enabled(self, info: Info, name: str, enabled: bool) -> MCPServerType:
-        user, session_key = _get_user_context(info)
-        return await mcp.aet_server_enabled(name=name, enabled=enabled, user=user, session_key=session_key)
+        session_key = _get_user_context(info)
+        return await mcp.aet_server_enabled(name=name, enabled=enabled, session_id=session_key)
 
     @strawberry.mutation
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        user, session_key = _get_user_context(info)
-        success, message, server = await mcp.connect_server(name, user=user, session_key=session_key)
+        session_key = _get_user_context(info)
+        success, message, server = await mcp.connect_server(name, session_id=session_key)
         return ConnectionResult(
             success=success,
             message=f"Successfully connected to {name}" if success else message,
@@ -101,8 +101,8 @@ class Mutation:
 
     @strawberry.mutation
     async def disconnect_mcp_server(self, info: Info, name: str) -> DisconnectResult:
-        user, session_key = _get_user_context(info)
-        success, message, server = await mcp.disconnect_server(name, user=user, session_key=session_key)
+        session_key = _get_user_context(info)
+        success, message, server = await mcp.disconnect_server(name, session_id=session_key)
         return DisconnectResult(
             success=success,
             message=message,
@@ -111,8 +111,8 @@ class Mutation:
 
     @strawberry.mutation
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        user, session_key = _get_user_context(info)
-        status, server = await mcp.arestart_mcp_server(name, user=user, session_key=session_key)
+        session_key = _get_user_context(info)
+        status, server = await mcp.arestart_mcp_server(name, session_id=session_key)
         success = status == "OK"
         return ConnectionResult(
             success=success,

@@ -1,21 +1,16 @@
 
-import json
 import os
 from datetime import datetime
-import asyncio
 import logging
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_tavily import TavilySearch
-from langchain_core.tools import tool
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
-from langgraph.graph import END
-from langgraph.types import Command
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 from app.mcp.manager import mcp
+from typing import Optional
 
 @tool
 def get_current_datetime() -> str:
@@ -31,23 +26,26 @@ def search_web(query: str) -> str:
     search = TavilySearch(max_results=3)
     return search.invoke(query)
 
-async def get_tools():
-    await mcp.initialize_client()
+async def get_tools(sessionId: Optional[str]):
     tools_list = [get_current_datetime]
-    # get tools from MCP manager
+    # get tools from MCP manager scoped to user/session
     try:
-        mcp_tools = mcp.get_tools()
+        mcp_tools = await mcp.aget_tools(session_id=sessionId)
         if mcp_tools:
             tools_list.extend(mcp_tools)
     except Exception as e:
-        logging.exception(f"Error fetching MCP tools: {e}")
+        logging.exception(f"Error fetching scoped MCP tools: {e}")
 
     return tools_list
 
 async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
-    tools = await get_tools()
-    print(f"DEBUG: tools: {tools}")
+
+    sessionId = state.get("sessionId", None)
+    tools = await get_tools(sessionId=sessionId)
+    # user_id = state.get("user_id", None)
+    # toolkit_names = state.get("toolkit", [])
+
 
     llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
         

@@ -3,7 +3,6 @@ import asyncio
 import logging
 import redis.asyncio as redis
 from typing import Dict, List, Optional, Any, Tuple
-from django.contrib.auth.models import User
 from django.conf import settings
 from .models import MCPServer
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
@@ -63,18 +62,15 @@ class MCPRedisManager:
         
         self.connection_ttl = 86400  # 24 hours TTL for connections
     
-    async def _get_redis_key_prefix(self, user: Optional[User] = None, session_key: Optional[str] = None) -> str:
-        """Get the Redis key prefix for user or session."""
-        if user:
-            return f"mcp:user:{user.id}"
-        elif session_key:
-            return f"mcp:session:{session_key}"
-        else:
-            raise ValueError("Either user or session_key must be provided")
+    async def _get_redis_key_prefix(self, session_id: str) -> str:
+        """Get the Redis key prefix for a session."""
+        if not session_id:
+            raise ValueError("session_id is required")
+        return f"mcp:session:{session_id}"
     
-    async def _get_server_keys(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> Dict[str, str]:
+    async def _get_server_keys(self, server_name: str, session_id: str) -> Dict[str, str]:
         """Get all Redis keys for a server connection."""
-        prefix = await self._get_redis_key_prefix(user, session_key)
+        prefix = await self._get_redis_key_prefix(session_id)
         return {
             "status": f"{prefix}:server:{server_name}:status",
             "tools": f"{prefix}:server:{server_name}:tools",
@@ -82,15 +78,15 @@ class MCPRedisManager:
             "connections": f"{prefix}:connections"
         }
     
-    async def get_connection_status(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> str:
+    async def get_connection_status(self, server_name: str, session_id: str) -> str:
         """Get connection status for a server."""
-        keys = await self._get_server_keys(server_name, user, session_key)
+        keys = await self._get_server_keys(server_name, session_id)
         status = await self.redis_client.get(keys["status"])
         return status if status else "DISCONNECTED"
     
-    async def get_connection_tools(self, server_name: str, user: Optional[User] = None, session_key: Optional[str] = None) -> List[Dict]:
+    async def get_connection_tools(self, server_name: str, session_id: str) -> List[Dict]:
         """Get tools for a server connection."""
-        keys = await self._get_server_keys(server_name, user, session_key)
+        keys = await self._get_server_keys(server_name, session_id)
         tools_json = await self.redis_client.get(keys["tools"])
         if tools_json:
             try:
@@ -99,9 +95,9 @@ class MCPRedisManager:
                 return []
         return []
     
-    async def set_connection_status(self, server_name: str, status: str, tools: List[Dict] = None, user: Optional[User] = None, session_key: Optional[str] = None):
+    async def set_connection_status(self, server_name: str, status: str, tools: List[Dict] = None, session_id: str = ""):
         """Set connection status and tools for a server."""
-        keys = await self._get_server_keys(server_name, user, session_key)
+        keys = await self._get_server_keys(server_name, session_id)
         
         # Set status
         await self.redis_client.set(keys["status"], status, ex=self.connection_ttl)
@@ -119,16 +115,16 @@ class MCPRedisManager:
             await self.redis_client.srem(keys["connections"], server_name)
             await self.redis_client.delete(keys["connected_at"])
     
-    async def get_user_connections(self, user: Optional[User] = None, session_key: Optional[str] = None) -> List[str]:
-        """Get list of connected server names for user/session."""
-        prefix = await self._get_redis_key_prefix(user, session_key)
+    async def get_user_connections(self, session_id: str) -> List[str]:
+        """Get list of connected server names for session."""
+        prefix = await self._get_redis_key_prefix(session_id)
         connections_key = f"{prefix}:connections"
         connections = await self.redis_client.smembers(connections_key)
         return list(connections) if connections else []
     
-    async def disconnect_all_servers(self, user: Optional[User] = None, session_key: Optional[str] = None):
-        """Disconnect all servers for a user/session."""
-        prefix = await self._get_redis_key_prefix(user, session_key)
+    async def disconnect_all_servers(self, session_id: str):
+        """Disconnect all servers for a session."""
+        prefix = await self._get_redis_key_prefix(session_id)
         connections_key = f"{prefix}:connections"
         
         # Get all connected servers
@@ -136,7 +132,7 @@ class MCPRedisManager:
         
         # Disconnect each server
         for server_name in connections:
-            await self.set_connection_status(server_name, "DISCONNECTED", user=user, session_key=session_key)
+            await self.set_connection_status(server_name, "DISCONNECTED", session_id=session_id)
     
     async def cleanup_expired_connections(self):
         """Clean up expired connections (called periodically)."""
