@@ -16,6 +16,7 @@ from fastmcp.client.auth.oauth import FileTokenStorage
 
 from fastmcp.client import Client as FastMCPClient  # type: ignore
 from fastmcp.client.auth import OAuth  # type: ignore
+from .oauth_storage import ClientTokenStorage, ClientOAuth
 
 class EmptyArgsSchema(BaseModel):
     """An empty schema for tools that have no parameters."""
@@ -163,16 +164,21 @@ class MCP:
         await self.initialize_client()  # re-initialize on change
         return rec
 
-    async def aremove_server(self, name: str, user: User) -> bool:
+    async def aremove_server(self, name: str, user: User, session_id: Optional[str] = None) -> bool:
         try:
             rec = await MCPServer.objects.filter(
                     name=name,
-                    owner=user 
+                    owner=user
             ).afirst()
-           
-            if rec.url:
+
+            if rec.url and rec.requires_oauth2:
                 try:
-                    storage = FileTokenStorage(server_url=rec.url)
+                    # Clear user-isolated tokens instead of shared tokens
+                    storage = ClientTokenStorage(
+                        server_url=rec.url,
+                        user_id=user.username if user else None,
+                        session_id=session_id
+                    )
                     await storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
@@ -298,7 +304,7 @@ class MCP:
     async def arestart_mcp_server(self, name: str, session_id: Optional[str] = None) -> tuple[str, Optional[MCPServer]]:
         """
         Check server health and return tools if healthy.
-        
+
         Returns:
             Tuple of (status: str, tools: List[Dict])
         """
@@ -306,7 +312,12 @@ class MCP:
             server = await MCPServer.objects.aget(name=name)
             if server.url and server.requires_oauth2:
                 try:
-                    storage = FileTokenStorage(server_url=server.url)
+                    # Clear user-isolated tokens instead of shared tokens
+                    storage = ClientTokenStorage(
+                        server_url=server.url,
+                        user_id=None,  # Could extract from server.owner if needed
+                        session_id=session_id
+                    )
                     await storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
@@ -323,7 +334,16 @@ class MCP:
             
             tools_info = []
             if server.requires_oauth2:
-               async with FastMCPClient(server.url, auth=OAuth(mcp_url=server.url, client_name="Inspect MCP", callback_port=8293, scopes=[],)) as client:
+               # Use user-isolated OAuth to prevent token sharing between users
+               oauth = ClientOAuth(
+                   mcp_url=server.url,
+                   user_id=None,
+                   session_id=session_id,
+                   client_name="Inspect MCP",
+                   callback_port=8293,
+                   scopes=[],
+               )
+               async with FastMCPClient(server.url, auth=oauth) as client:
                   await client.ping()
                   raw_tools = await client.list_tools()
                   tools = self._patch_tools_schema(raw_tools)
@@ -356,7 +376,9 @@ class MCP:
         Conditionally uses OAuth2 authentication based on the requires_oauth2 field.
         """
         try:
+            print(f'DEBUG: connecting to {name} for session {session_id}')
             server = await MCPServer.objects.aget(name=name)
+            print(server, 'server in connect_server')
         except MCPServer.DoesNotExist:
             return False, "Server not found", None
 
@@ -372,8 +394,11 @@ class MCP:
         try:
             # Check if OAuth2 is required for this server
             if server.requires_oauth2:
-                oauth = OAuth(
+                # Use user-isolated OAuth to prevent token sharing between users
+                oauth = ClientOAuth(
                     mcp_url=server.url,
+                    user_id=None,  # We'll extract from server or use session_id
+                    session_id=session_id,
                     client_name="Inspect MCP",
                     callback_port=8293,
                     scopes=[],
