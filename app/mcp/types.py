@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from strawberry.scalars import JSON
 from .models import MCPServer
+from asgiref.sync import sync_to_async
 
 # ── graphql: types ────────────────────────────────────────────────────────────
 @strawberry.type
@@ -39,8 +40,11 @@ class MCPServerType:
     is_public: bool
 
     @strawberry.field
-    def owner(self, root: MCPServer) -> Optional[str]:
-        return root.owner.username if root.owner else None
+    async def owner(self, root: MCPServer) -> Optional[str]:
+        @sync_to_async
+        def get_owner_username():
+            return root.owner.username if root.owner else None
+        return await get_owner_username()
 
     @strawberry.field
     def tools(self, root: "MCPServer") -> List["ToolInfo"]:
