@@ -2,7 +2,6 @@
 Simple tool-calling agent for testing with Tavily search and datetime tools.
 """
 
-from copilotkit.langgraph import copilotkit_emit_state
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -42,7 +41,6 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
     state.update(tool_result)
     state["tool_calls"] = tool_results
 
-    await copilotkit_emit_state(config, state)
     return state
 
 # build the graph
