@@ -50,7 +50,7 @@ async def agui_langgraph_handler(request):
         # Use async streaming response
         response = StreamingHttpResponse(
             streaming_content=event_generator(),
-            content_type='text/event-stream'
+            content_type=encoder.content_type()
         )
 
         # Set SSE headers

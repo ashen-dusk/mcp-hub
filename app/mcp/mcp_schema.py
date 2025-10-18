@@ -53,9 +53,25 @@ class Query:
 
     @strawberry.field(permission_classes=[IsAuthenticated])
     async def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
-        """Get only the user's own MCP servers."""
+        """Get only the user's own MCP servers with connection status and tools."""
         user = info.context.request.user
-        return [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
+        session_key = _get_user_context(info)
+        print(f"DEBUG: user in get_user_mcp_servers: {session_key}")
+
+        servers = [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
+
+        # Get user/session-specific connection states from Redis
+        for server in servers:
+            try:
+                server.connection_status = await mcp._get_connection_status(server.name, session_key)
+                server.tools = await mcp._get_connection_tools(server.name, session_key)
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to get connection state for server {server.name}: {e}")
+                server.connection_status = "DISCONNECTED"
+                server.tools = []
+
+        return servers
 
 
 @strawberry.type
