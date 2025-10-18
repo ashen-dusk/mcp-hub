@@ -1,4 +1,12 @@
+"""
+GraphQL schema for MCP server operations.
+
+Provides queries and mutations for managing MCP servers,
+connections, and retrieving server-specific information.
+"""
+
 from typing import List, Optional
+import logging
 
 import strawberry
 import strawberry_django
@@ -9,34 +17,38 @@ from app.mcp.manager import mcp
 from app.mcp.models import MCPServer
 from django.contrib.auth.models import AnonymousUser, User
 from app.mcp.types import (
-    MCPServerType, 
+    MCPServerType,
     MCPServerFilter,
-    ConnectionResult, 
-    DisconnectResult, 
+    ConnectionResult,
+    DisconnectResult,
     ToolInfo,
     JSON
 )
+from app.mcp.utils import generate_anonymous_session_key
 
-def _get_user_context(info: Info) -> tuple[Optional[User], Optional[str]]:
-    """Extract user and session key from request context."""
+
+def _get_user_context(info: Info) -> str:
+    """
+    Extract session key from request context.
+
+    For authenticated users, returns their username.
+    For anonymous users, generates a session key based on request metadata.
+
+    Args:
+        info: GraphQL resolver info object
+
+    Returns:
+        Session identifier string
+    """
     request = info.context.request
     user = getattr(request, 'user', None)
-    
-    # If user is authenticated, return user
+
+    # If user is authenticated, use username as session key
     if user and not isinstance(user, AnonymousUser) and user.is_authenticated:
-        return user
-    
-    # For anonymous users, create a unique session key based on request characteristics
-    # This avoids Django session creation in async context
-    ip = request.META.get('REMOTE_ADDR', 'unknown')
-    user_agent = request.META.get('HTTP_USER_AGENT', 'unknown')[:50]
-    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
-    
-    # Create a unique identifier for this anonymous session
-    session_identifier = f"{ip}_{user_agent}_{forwarded_for}"
-    session_key = f"anon_{hash(session_identifier)}"
-    
-    return session_key
+        return user.username
+
+    # For anonymous users, generate session key from request
+    return generate_anonymous_session_key(request)
 
 @strawberry.type
 # ── graphql: query ───────────────────────────────────────────────────────────
@@ -47,7 +59,7 @@ class Query:
     async def mcp_servers(self, info: Info) -> List[MCPServerType]:
         """Get all public MCP servers with user/session-specific connection states."""
         session_key = _get_user_context(info)
-        print(f"DEBUG: user in mcp_servers: {session_key}")
+        logging.debug(f"Fetching MCP servers for session: {session_key}")
         servers = await mcp.alist_servers(session_id=session_key)
         return servers
 
@@ -56,7 +68,7 @@ class Query:
         """Get only the user's own MCP servers with connection status and tools."""
         user = info.context.request.user
         session_key = _get_user_context(info)
-        print(f"DEBUG: user in get_user_mcp_servers: {session_key}")
+        logging.debug(f"Fetching user MCP servers for session: {session_key}")
 
         servers = [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
 
@@ -66,7 +78,6 @@ class Query:
                 server.connection_status = await mcp._get_connection_status(server.name, session_key)
                 server.tools = await mcp._get_connection_tools(server.name, session_key)
             except Exception as e:
-                import logging
                 logging.warning(f"Failed to get connection state for server {server.name}: {e}")
                 server.connection_status = "DISCONNECTED"
                 server.tools = []
@@ -101,8 +112,9 @@ class Mutation:
 
     @strawberry.mutation
     async def set_mcp_server_enabled(self, info: Info, name: str, enabled: bool) -> MCPServerType:
+        """Enable or disable an MCP server."""
         session_key = _get_user_context(info)
-        return await mcp.aet_server_enabled(name=name, enabled=enabled, session_id=session_key)
+        return await mcp.aset_server_enabled(name=name, enabled=enabled, session_id=session_key)
 
     @strawberry.mutation
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:

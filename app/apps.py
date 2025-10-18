@@ -29,9 +29,11 @@ class AppConfig(AppConfig):
             cmd in sys.argv for cmd in ['makemigrations', 'migrate', 'collectstatic', 'check']
         )
         if is_management_command:
-            logging.info("Skipping MCP server status reset for management command.")
+            logging.info("Skipping MCP initialization for management command.")
             return
 
+        # Import MCP manager to ensure it's initialized
+        # Note: Redis TTL handles automatic cleanup of expired connections,
+        # so no manual reset is needed on startup
         from .mcp.manager import mcp
-        logging.info("Resetting all MCP server statuses on application startup.")
-        run_async_from_sync(mcp.areset_all_server_statuses())
+        logging.info("MCP manager initialized. Redis TTL handles connection cleanup automatically.")

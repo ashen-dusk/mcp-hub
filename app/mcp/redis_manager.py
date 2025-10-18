@@ -1,143 +1,242 @@
+"""
+Redis manager for MCP connection state.
+
+Handles all Redis operations for storing and retrieving MCP server
+connection states, tools, and session-specific data.
+"""
+
 import json
-import asyncio
 import logging
+from typing import Dict, List, Optional
+
 import redis.asyncio as redis
-from typing import Dict, List, Optional, Any, Tuple
 from django.conf import settings
-from .models import MCPServer
-from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from django.utils import timezone
-from pydantic.v1 import BaseModel
-from fastmcp.client.auth.oauth import FileTokenStorage
-from fastmcp.client import Client as FastMCPClient
-from fastmcp.client.auth import OAuth
 
-class EmptyArgsSchema(BaseModel):
-    """An empty schema for tools that have no parameters."""
-    pass
+from .constants import REDIS_CONNECTION_TTL, REDIS_KEY_PREFIX
+from .utils import safe_json_dumps
 
-def _safe_json_dumps(obj: Any) -> str:
-    """Safely serialize an object to JSON, handling non-serializable types."""
-    def json_serializer(obj):
-        if callable(obj):
-            return str(obj)
-        elif hasattr(obj, '__dict__'):
-            return obj.__dict__
-        else:
-            return str(obj)
-    
-    try:
-        return json.dumps(obj, default=json_serializer)
-    except Exception as e:
-        logging.warning(f"Failed to serialize object to JSON: {e}")
-        return "{}"
 
 class MCPRedisManager:
-    def __init__(self, redis_url: str = None):
+    """
+    Manages Redis operations for MCP server connections.
+
+    Provides session-isolated storage for connection states, tools,
+    and metadata with automatic TTL-based cleanup.
+    """
+
+    def __init__(self, redis_url: Optional[str] = None):
+        """
+        Initialize Redis manager.
+
+        Args:
+            redis_url: Redis connection URL (defaults to settings.REDIS_URL)
+        """
         redis_url = redis_url or getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
-        
-        # For Redis Cloud, try different connection methods
+        self.redis_client = self._create_redis_client(redis_url)
+        self.connection_ttl = REDIS_CONNECTION_TTL
+
+    def _create_redis_client(self, redis_url: str) -> redis.Redis:
+        """
+        Create Redis client with appropriate connection settings.
+
+        Args:
+            redis_url: Redis connection URL
+
+        Returns:
+            Configured Redis client instance
+        """
+        # Handle Redis Cloud with SSL considerations
         if 'redis-cloud.com' in redis_url:
             try:
-                # Method 1: Try with SSL disabled
                 from urllib.parse import urlparse
                 parsed = urlparse(redis_url)
-                self.redis_client = redis.Redis(
+                client = redis.Redis(
                     host=parsed.hostname,
                     port=parsed.port,
                     password=parsed.password,
                     decode_responses=True,
                     ssl=False
                 )
-                print(f"[DEBUG] Redis Cloud connection created (SSL disabled)")
+                logging.info("Redis Cloud connection created (SSL disabled)")
+                return client
             except Exception as e:
-                print(f"[DEBUG] Redis Cloud connection failed: {e}")
-                # Method 2: Try standard URL
-                self.redis_client = redis.from_url(redis_url, decode_responses=True)
-                print(f"[DEBUG] Redis Cloud connection created (standard URL)")
-        else:
-            # For local Redis
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
-            print(f"[DEBUG] Local Redis connection created")
-        
-        self.connection_ttl = 86400  # 24 hours TTL for connections
-    
-    async def _get_redis_key_prefix(self, session_id: str) -> str:
-        """Get the Redis key prefix for a session."""
+                logging.warning(f"Redis Cloud SSL connection failed: {e}, trying standard URL")
+                # Fallback to standard URL parsing
+
+        # Standard Redis connection
+        client = redis.from_url(redis_url, decode_responses=True)
+        logging.info("Redis connection created")
+        return client
+
+    def _build_key(self, session_id: str, *parts: str) -> str:
+        """
+        Build a Redis key from session and parts.
+
+        Args:
+            session_id: Session identifier
+            *parts: Additional key components
+
+        Returns:
+            Formatted Redis key
+        """
         if not session_id:
             raise ValueError("session_id is required")
-        return f"mcp:session:{session_id}"
-    
-    async def _get_server_keys(self, server_name: str, session_id: str) -> Dict[str, str]:
-        """Get all Redis keys for a server connection."""
-        prefix = await self._get_redis_key_prefix(session_id)
-        return {
-            "status": f"{prefix}:server:{server_name}:status",
-            "tools": f"{prefix}:server:{server_name}:tools",
-            "connected_at": f"{prefix}:server:{server_name}:connected_at",
-            "connections": f"{prefix}:connections"
-        }
-    
+
+        key_parts = [REDIS_KEY_PREFIX, "session", session_id] + list(parts)
+        return ":".join(key_parts)
+
     async def get_connection_status(self, server_name: str, session_id: str) -> str:
-        """Get connection status for a server."""
-        keys = await self._get_server_keys(server_name, session_id)
-        status = await self.redis_client.get(keys["status"])
+        """
+        Get connection status for a server.
+
+        Args:
+            server_name: Name of the MCP server
+            session_id: Session identifier
+
+        Returns:
+            Connection status string (CONNECTED/DISCONNECTED/FAILED)
+        """
+        key = self._build_key(session_id, "server", server_name, "status")
+        status = await self.redis_client.get(key)
         return status if status else "DISCONNECTED"
-    
+
     async def get_connection_tools(self, server_name: str, session_id: str) -> List[Dict]:
-        """Get tools for a server connection."""
-        keys = await self._get_server_keys(server_name, session_id)
-        tools_json = await self.redis_client.get(keys["tools"])
+        """
+        Get tools for a server connection.
+
+        Args:
+            server_name: Name of the MCP server
+            session_id: Session identifier
+
+        Returns:
+            List of tool dictionaries
+        """
+        key = self._build_key(session_id, "server", server_name, "tools")
+        tools_json = await self.redis_client.get(key)
+
         if tools_json:
             try:
                 return json.loads(tools_json)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logging.warning(f"Failed to decode tools JSON for {server_name}: {e}")
                 return []
         return []
-    
-    async def set_connection_status(self, server_name: str, status: str, tools: List[Dict] = None, session_id: str = ""):
-        """Set connection status and tools for a server."""
-        keys = await self._get_server_keys(server_name, session_id)
-        
-        # Set status
-        await self.redis_client.set(keys["status"], status, ex=self.connection_ttl)
-        
+
+    async def set_connection_status(
+        self,
+        server_name: str,
+        status: str,
+        tools: Optional[List[Dict]] = None,
+        session_id: str = ""
+    ) -> None:
+        """
+        Set connection status and tools for a server.
+
+        Args:
+            server_name: Name of the MCP server
+            status: Connection status (CONNECTED/DISCONNECTED/FAILED)
+            tools: Optional list of tool dictionaries
+            session_id: Session identifier
+        """
+        status_key = self._build_key(session_id, "server", server_name, "status")
+        tools_key = self._build_key(session_id, "server", server_name, "tools")
+        connected_at_key = self._build_key(session_id, "server", server_name, "connected_at")
+        connections_key = self._build_key(session_id, "connections")
+
+        # Set status with TTL
+        await self.redis_client.set(status_key, status, ex=self.connection_ttl)
+
         # Set tools if provided
         if tools is not None:
-            tools_json = _safe_json_dumps(tools)
-            await self.redis_client.set(keys["tools"], tools_json, ex=self.connection_ttl)
-        
-        # Update connections set
+            tools_json = safe_json_dumps(tools)
+            await self.redis_client.set(tools_key, tools_json, ex=self.connection_ttl)
+
+        # Update connections set and metadata
         if status == "CONNECTED":
-            await self.redis_client.sadd(keys["connections"], server_name)
-            await self.redis_client.set(keys["connected_at"], timezone.now().isoformat(), ex=self.connection_ttl)
+            await self.redis_client.sadd(connections_key, server_name)
+            await self.redis_client.set(
+                connected_at_key,
+                timezone.now().isoformat(),
+                ex=self.connection_ttl
+            )
         else:
-            await self.redis_client.srem(keys["connections"], server_name)
-            await self.redis_client.delete(keys["connected_at"])
-    
-    async def get_user_connections(self, session_id: str) -> List[str]:
-        """Get list of connected server names for session."""
-        prefix = await self._get_redis_key_prefix(session_id)
-        connections_key = f"{prefix}:connections"
+            # Remove from connections set on disconnect/failure
+            await self.redis_client.srem(connections_key, server_name)
+            await self.redis_client.delete(connected_at_key)
+
+    async def get_connected_servers(self, session_id: str) -> List[str]:
+        """
+        Get list of connected server names for a session.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            List of connected server names
+        """
+        connections_key = self._build_key(session_id, "connections")
         connections = await self.redis_client.smembers(connections_key)
         return list(connections) if connections else []
-    
-    async def disconnect_all_servers(self, session_id: str):
-        """Disconnect all servers for a session."""
-        prefix = await self._get_redis_key_prefix(session_id)
-        connections_key = f"{prefix}:connections"
-        
+
+    async def disconnect_all_servers(self, session_id: str) -> None:
+        """
+        Disconnect all servers for a session.
+
+        Args:
+            session_id: Session identifier
+        """
         # Get all connected servers
-        connections = await self.redis_client.smembers(connections_key)
-        
+        connections = await self.get_connected_servers(session_id)
+
         # Disconnect each server
         for server_name in connections:
-            await self.set_connection_status(server_name, "DISCONNECTED", session_id=session_id)
-    
-    async def cleanup_expired_connections(self):
-        """Clean up expired connections (called periodically)."""
-        # Redis TTL handles this automatically, but you could add custom cleanup logic here
-        pass
+            await self.set_connection_status(
+                server_name,
+                "DISCONNECTED",
+                session_id=session_id
+            )
+
+    async def clear_session_data(self, session_id: str) -> None:
+        """
+        Clear all Redis data for a specific session.
+
+        Args:
+            session_id: Session identifier
+        """
+        pattern = self._build_key(session_id, "*")
+
+        # Find all keys matching the session pattern
+        cursor = 0
+        while True:
+            cursor, keys = await self.redis_client.scan(
+                cursor=cursor,
+                match=pattern,
+                count=100
+            )
+
+            if keys:
+                await self.redis_client.delete(*keys)
+
+            if cursor == 0:
+                break
+
+        logging.info(f"Cleared all data for session: {session_id}")
+
+    async def health_check(self) -> bool:
+        """
+        Check if Redis connection is healthy.
+
+        Returns:
+            True if connection is healthy, False otherwise
+        """
+        try:
+            await self.redis_client.ping()
+            return True
+        except Exception as e:
+            logging.error(f"Redis health check failed: {e}")
+            return False
+
 
 # Global instance
 mcp_redis = MCPRedisManager()
