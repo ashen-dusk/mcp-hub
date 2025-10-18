@@ -256,7 +256,10 @@ class MCPServerManager:
     # ──────────────────────────────────────────────────────────────────────
 
     async def _build_adapter_map(
-        self, names: Optional[List[str]] = None
+        self,
+        names: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Build adapter configuration map for specified servers.
@@ -265,11 +268,13 @@ class MCPServerManager:
 
         Args:
             names: List of server names to include (None = empty map)
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
 
         Returns:
             Dictionary mapping server names to adapter configs
         """
-        return await _adapter_builder.build_adapter_map(names)
+        return await _adapter_builder.build_adapter_map(names, session_id, user_id)
 
     # ──────────────────────────────────────────────────────────────────────
     # Global Client Initialization (for shared tool access)
@@ -549,8 +554,12 @@ class MCPServerManager:
             if not connected_names:
                 return []
 
-            # Build throwaway adapter map for this session
-            adapter_map = await self._build_adapter_map(names=connected_names)
+            # Build throwaway adapter map for this session with OAuth token context
+            adapter_map = await self._build_adapter_map(
+                names=connected_names,
+                session_id=session_id
+            )
+            print(f"DEBUG: aget_tools adapter_map: {adapter_map}")
             if not adapter_map:
                 return []
 

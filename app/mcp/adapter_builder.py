@@ -9,8 +9,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
-from fastmcp.client.auth.oauth import FileTokenStorage
-
+from .oauth_storage import ClientTokenStorage
 from .models import MCPServer
 
 
@@ -34,7 +33,9 @@ class MCPAdapterBuilder:
 
     async def build_adapter_map(
         self,
-        server_names: Optional[List[str]] = None
+        server_names: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Build adapter configuration map for specified servers.
@@ -43,6 +44,8 @@ class MCPAdapterBuilder:
 
         Args:
             server_names: List of server names to include (None = empty map)
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
 
         Returns:
             Dictionary mapping server names to adapter configs:
@@ -72,12 +75,17 @@ class MCPAdapterBuilder:
                 f"Building adapter for: name={server.name} transport={server.transport}"
             )
 
-            adapter_config = await self._build_server_adapter(server)
+            adapter_config = await self._build_server_adapter(server, session_id, user_id)
             adapter_map[server.name] = adapter_config
 
         return adapter_map
 
-    async def _build_server_adapter(self, server: MCPServer) -> Dict[str, Any]:
+    async def _build_server_adapter(
+        self,
+        server: MCPServer,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Build adapter configuration for a single server.
 
@@ -85,6 +93,8 @@ class MCPAdapterBuilder:
 
         Args:
             server: MCPServer instance
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
 
         Returns:
             Adapter configuration dictionary
@@ -92,7 +102,7 @@ class MCPAdapterBuilder:
         if server.transport == "stdio":
             return self._build_stdio_adapter(server)
         else:
-            return await self._build_network_adapter(server)
+            return await self._build_network_adapter(server, session_id, user_id)
 
     def _build_stdio_adapter(self, server: MCPServer) -> Dict[str, Any]:
         """
@@ -113,12 +123,19 @@ class MCPAdapterBuilder:
             "transport": "stdio",
         }
 
-    async def _build_network_adapter(self, server: MCPServer) -> Dict[str, Any]:
+    async def _build_network_adapter(
+        self,
+        server: MCPServer,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Build adapter configuration for network transports (SSE, WebSocket, etc.).
 
         Args:
             server: MCPServer instance
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
 
         Returns:
             Network adapter configuration
@@ -137,7 +154,7 @@ class MCPAdapterBuilder:
 
         # Add OAuth2 tokens if required
         if server.requires_oauth2:
-            entry = await self.add_oauth_headers(entry, server)
+            entry = await self.add_oauth_headers(entry, server, session_id, user_id)
 
         return entry
 
@@ -198,23 +215,32 @@ class MCPAdapterBuilder:
     async def add_oauth_headers(
         self,
         entry: Dict[str, Any],
-        server: MCPServer
+        server: MCPServer,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Add OAuth2 authorization headers to adapter entry.
 
-        Fetches OAuth tokens from storage and adds Authorization header.
+        Fetches OAuth tokens from user/session-isolated storage and adds Authorization header.
         Creates headers dict if it doesn't exist.
 
         Args:
             entry: Adapter configuration dictionary
             server: MCPServer instance
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
 
         Returns:
             Updated adapter configuration with OAuth headers
         """
         try:
-            storage = FileTokenStorage(server_url=server.url)
+            # Use ClientTokenStorage to access session-isolated tokens
+            storage = ClientTokenStorage(
+                server_url=server.url,
+                user_id=user_id,
+                session_id=session_id
+            )
             tokens = await storage.get_tokens()
 
             if tokens and tokens.access_token:
@@ -225,7 +251,7 @@ class MCPAdapterBuilder:
                 # Add authorization header
                 entry["headers"]["Authorization"] = f"Bearer {tokens.access_token}"
 
-                logging.debug(f"Added OAuth token for {server.name}")
+                logging.info(f"Added OAuth token for {server.name} (session: {session_id or user_id})")
 
         except Exception as e:
             logging.warning(f"Failed to fetch OAuth token for {server.name}: {e}")
