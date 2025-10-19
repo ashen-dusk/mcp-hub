@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
     'strawberry_django',
     'django_svelte_jsoneditor',
     'app',
@@ -49,6 +50,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -130,10 +132,15 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS and CSRF for Next.js frontend domain(s)
+# CORS and CSRF for Next.js frontend domain(s) and Chrome extension
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
+]
+
+# Allow Chrome extension origins using regex
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^chrome-extension://[a-zA-Z0-9]+$",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
