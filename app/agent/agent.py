@@ -24,17 +24,23 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
     sessionId = state.get("sessionId", None)
     tools = await get_tools(sessionId=sessionId)
     print(f"DEBUG: async_tool_node: {tools}")
-    
+
     tool_node = ToolNode(tools)
     tool_result = await tool_node.ainvoke(state, config)
 
     tool_results = []
     for message in tool_result.get("messages", []):
         if message.type == "tool":
+            # Try to parse as JSON, otherwise use raw content
+            try:
+                result_content = json.loads(message.content)
+            except (json.JSONDecodeError, TypeError):
+                result_content = message.content
+
             tool_results.append({
                 "tool_call_id": message.tool_call_id,
                 "name": message.name,
-                "result": json.loads(message.content),
+                "result": result_content,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 

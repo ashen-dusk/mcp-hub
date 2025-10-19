@@ -1,16 +1,18 @@
 
 import os
-from datetime import datetime
 import logging
+from typing import Optional
+from datetime import datetime, timezone, timedelta
+
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_tavily import TavilySearch
+from langchain_core.tools import tool
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
-from langchain_tavily import TavilySearch
-from langchain_core.tools import tool
 from app.mcp.manager import mcp
-from typing import Optional
+import platform
 
 @tool
 def get_current_datetime() -> str:
@@ -26,8 +28,13 @@ def search_web(query: str) -> str:
     search = TavilySearch(max_results=3)
     return search.invoke(query)
 
+@tool
+def get_system_info() -> str:
+    """Return basic information about the system environment."""
+    return f"{platform.system()} {platform.release()} ({platform.processor()})"
+    
 async def get_tools(sessionId: Optional[str]=None):
-    tools_list = [get_current_datetime]
+    tools_list = [get_system_info]
     # sessionId = 'html78910'
     # get tools from MCP manager scoped to user/session
     try:
@@ -52,8 +59,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
         
+        # Get IST time (UTC+5:30)
+    ist_timezone = timezone(timedelta(hours=5, minutes=30))
+    ist_now = datetime.now(ist_timezone)
+
     system_message = f"""
-        You are a helpful assistant that can answer questions and perform tasks using the MCP servers.
+     Today's date: {ist_now.strftime("%Y-%m-%d")}
+     Current time (IST): {ist_now.strftime("%H:%M:%S")}
+        You are a helpful assistant named MCP Assistant that can answer questions and perform tasks using the MCP servers.
         """
     response = await llm_with_tools.ainvoke(
         [
