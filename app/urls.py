@@ -9,6 +9,9 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('health/', views.health_check, name='health_check'),
 
+    # Audio Transcription endpoint
+    path('transcribe/', views.transcribe_audio, name='transcribe_audio'),
+
     # AG-UI Protocol endpoint
     path(
         "langgraph-agent",
