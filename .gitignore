@@ -6,3 +6,6 @@ env/
 # ignore django migrations
 **/migrations/*.py
 !**/migrations/
+
+.venv/
+venv/
