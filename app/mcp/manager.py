@@ -543,7 +543,7 @@ class MCPServerManager:
         try:
             # Determine which servers are connected for this session
             connected_names: List[str] = []
-            qs = MCPServer.objects.filter(enabled=True, is_public=True)
+            qs = MCPServer.objects.filter(enabled=True)
 
             async for rec in qs:
                 try:
