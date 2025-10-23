@@ -28,6 +28,7 @@ class MCPServerFilter:
 class MCPServerType:
     id: ID
     name: str
+    description: Optional[str]
     transport: str
     url: Optional[str]
     command: Optional[str]

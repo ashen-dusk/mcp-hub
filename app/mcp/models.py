@@ -26,6 +26,7 @@ class MCPServer(models.Model):
     # ── django: field ────────────────────────────────────────────────────────────
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True, help_text="Description of what this server does")
     transport = models.CharField(max_length=32, choices=TRANSPORT_CHOICES)
     url = models.TextField(blank=True, null=True)
     command = models.TextField(blank=True, null=True)

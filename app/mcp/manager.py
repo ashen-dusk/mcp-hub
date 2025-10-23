@@ -139,6 +139,7 @@ class MCPServerManager:
         query_params: Optional[dict] = None,
         requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False,
+        description: Optional[str] = None,
     ) -> MCPServer:
         """
         Create or update an MCP server configuration.
@@ -154,6 +155,7 @@ class MCPServerManager:
             query_params: URL query parameters
             requires_oauth2: Whether OAuth2 is required
             is_public: Whether server is publicly available
+            description: Description of what this server does
 
         Returns:
             Created or updated MCPServer instance
@@ -171,6 +173,7 @@ class MCPServerManager:
                 "enabled": True,
                 "requires_oauth2": requires_oauth2,
                 "is_public": is_public,
+                "description": description,
             },
         )
         await self.initialize_client()  # Refresh global client if needed
