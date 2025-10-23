@@ -161,7 +161,6 @@ class MCPServerManager:
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
             owner=owner,
-            is_public=is_public,
             defaults={
                 "transport": transport,
                 "url": url,
@@ -171,6 +170,7 @@ class MCPServerManager:
                 "query_params": query_params or {},
                 "enabled": True,
                 "requires_oauth2": requires_oauth2,
+                "is_public": is_public,
             },
         )
         await self.initialize_client()  # Refresh global client if needed
