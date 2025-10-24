@@ -9,3 +9,7 @@ env/
 
 .venv/
 venv/
+
+# Ignore log files and directory
+logs/
+*.log.*

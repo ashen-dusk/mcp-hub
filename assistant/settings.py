@@ -149,3 +149,122 @@ CSRF_TRUSTED_ORIGINS = [
 
 # Redis configuration for MCP connection state
 REDIS_URL = os.getenv('REDIS_URL', 'redis://default:mVDKhSr3mZzjbaEUix6xsAYcQbQMV9Rk@redis-10792.crce179.ap-south-1-1.ec2.redns.redis-cloud.com:10792')
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} [{name}] {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+        'json': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file_oauth': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'oauth.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'file_mcp': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'mcp.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'file_general': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'app.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'file_error': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'error.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        # OAuth-specific logging
+        'app.mcp.oauth_storage': {
+            'handlers': ['console', 'file_oauth'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # MCP-specific logging
+        'app.mcp': {
+            'handlers': ['console', 'file_mcp'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # Django core logging
+        'django': {
+            'handlers': ['console', 'file_general', 'file_error'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'file_error'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'django.server': {
+            'handlers': ['console', 'file_general'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # App-level logging
+        'app': {
+            'handlers': ['console', 'file_general', 'file_error'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # LangGraph/Agent logging
+        'app.agent': {
+            'handlers': ['console', 'file_general'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # Root logger (catches everything else)
+        '': {
+            'handlers': ['console', 'file_general'],
+            'level': 'WARNING',
+        },
+    },
+}
+
+# Create logs directory if it doesn't exist
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOGS_DIR, exist_ok=True)
