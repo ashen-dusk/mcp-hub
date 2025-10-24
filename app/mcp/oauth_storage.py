@@ -85,15 +85,19 @@ class ClientOAuth(OAuthClientProvider):
     """
     Production-ready OAuth implementation with user-isolated token storage.
 
-    Uses a fixed redirect URI (https://api.quicklit.in/auth-callback) that should be
-    configured in nginx to forward to the local callback server.
+    The redirect URI and callback port can be configured via environment variables:
+    - REDIRECT_URI: Public callback URL (default: https://api.quicklit.in/auth-callback)
+    - OAUTH_CALLBACK_PORT: Local callback server port (default: 8293)
+
+    In production, configure nginx to forward the public redirect URI to the local
+    callback server (e.g., https://api.quicklit.in/auth-callback -> http://localhost:8293/callback).
 
     This ensures that each user/session has their own OAuth tokens,
     preventing token sharing across different users.
     """
 
-    # Fixed redirect URI for production
-    REDIRECT_URI = "https://api.quicklit.in/auth-callback"
+    # Default values (can be overridden by environment variables)
+    DEFAULT_REDIRECT_URI = "https://api.quicklit.in/auth-callback"
     DEFAULT_CALLBACK_PORT = 8293
 
     def __init__(
@@ -107,14 +111,18 @@ class ClientOAuth(OAuthClientProvider):
         additional_client_metadata: Optional[dict[str, Any]] = None,
     ):
         """
-        Initialize user-isolated OAuth with fixed production callback.
+        Initialize user-isolated OAuth with configurable callback.
+
+        Environment variables:
+            REDIRECT_URI: Public callback URL (default: https://api.quicklit.in/auth-callback)
+            OAUTH_CALLBACK_PORT: Port for local callback server (default: 8293)
 
         Args:
             mcp_url: Full URL to the MCP endpoint (e.g. "http://host/mcp/sse/")
             user_id: The user identifier for token isolation
             session_id: The session identifier for token isolation (used if user_id not available)
             client_name: Name for this client during registration
-            callback_port: Port for local callback server (default: 8293)
+            callback_port: Port for local callback server (overrides OAUTH_CALLBACK_PORT env var)
             scopes: OAuth scopes to request as a list of strings
             additional_client_metadata: Extra fields for OAuthClientMetadata
         """
@@ -122,11 +130,19 @@ class ClientOAuth(OAuthClientProvider):
         parsed_url = urlparse(mcp_url)
         server_base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-        # Set up redirect port for local callback server
-        self.redirect_port = callback_port or self.DEFAULT_CALLBACK_PORT
+        # Get redirect URI from environment or use default
+        redirect_uri = os.getenv("REDIRECT_URI", self.DEFAULT_REDIRECT_URI)
 
-        # Use fixed redirect URI
-        redirect_uri = self.REDIRECT_URI
+        # Get callback port from parameter, environment, or use default
+        if callback_port is None:
+            env_port = os.getenv("OAUTH_CALLBACK_PORT", str(self.DEFAULT_CALLBACK_PORT))
+            try:
+                callback_port = int(env_port)
+            except ValueError:
+                logging.warning(f"Invalid OAUTH_CALLBACK_PORT: {env_port}, using default {self.DEFAULT_CALLBACK_PORT}")
+                callback_port = self.DEFAULT_CALLBACK_PORT
+
+        self.redirect_port = callback_port
 
         logging.info(f"Using OAuth redirect URI: {redirect_uri}")
         logging.info(f"Local callback server will run on port: {self.redirect_port}")
