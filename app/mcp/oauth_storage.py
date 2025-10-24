@@ -57,7 +57,8 @@ class ClientTokenStorage(FileTokenStorage):
         # Ensure the directory exists
         user_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        logging.info(f"Using user-isolated token storage at: {user_cache_dir}")
+        logging.info(f"[OAuth Storage] Using user-isolated token storage at: {user_cache_dir}")
+        logging.debug(f"[OAuth Storage] Server URL: {server_url}, User: {identifier}")
 
         # Initialize parent class with user-specific cache directory
         super().__init__(server_url=server_url, cache_dir=user_cache_dir)
@@ -75,10 +76,18 @@ class ClientTokenStorage(FileTokenStorage):
         base_cache_dir = default_cache_dir()
         user_cache_dir = base_cache_dir / f"user_{identifier}"
 
+        logging.info(f"[OAuth Storage] Attempting to clear tokens for user: {identifier}")
+
         if user_cache_dir.exists():
             import shutil
-            shutil.rmtree(user_cache_dir)
-            logging.info(f"Cleared all tokens for user: {identifier}")
+            try:
+                shutil.rmtree(user_cache_dir)
+                logging.info(f"[OAuth Storage] ✅ Cleared all tokens for user: {identifier}")
+            except Exception as e:
+                logging.error(f"[OAuth Storage] ❌ Failed to clear tokens for user {identifier}: {e}")
+                raise
+        else:
+            logging.debug(f"[OAuth Storage] No token cache found for user: {identifier}")
 
 
 class ClientOAuth(OAuthClientProvider):
@@ -144,8 +153,10 @@ class ClientOAuth(OAuthClientProvider):
 
         self.redirect_port = callback_port
 
-        logging.info(f"Using OAuth redirect URI: {redirect_uri}")
-        logging.info(f"Local callback server will run on port: {self.redirect_port}")
+        logging.info(f"[OAuth] Initializing OAuth client for user={user_id or session_id}")
+        logging.info(f"[OAuth] MCP server URL: {server_base_url}")
+        logging.info(f"[OAuth] Redirect URI: {redirect_uri}")
+        logging.info(f"[OAuth] Callback port: {self.redirect_port}")
 
         # Prepare scopes
         scopes_str: str
@@ -155,6 +166,9 @@ class ClientOAuth(OAuthClientProvider):
             scopes_str = str(scopes)
         else:
             scopes_str = ""
+
+        if scopes_str:
+            logging.info(f"[OAuth] Requested scopes: {scopes_str}")
 
         # Build client metadata with custom redirect URI
         client_metadata = OAuthClientMetadata(
@@ -187,16 +201,23 @@ class ClientOAuth(OAuthClientProvider):
             callback_handler=self.callback_handler,
         )
 
-        logging.info(f"Initialized OAuth for: {user_id or session_id}")
+        logging.info(f"[OAuth] Successfully initialized OAuth for user={user_id or session_id}")
 
     async def _initialize(self) -> None:
         """Load stored tokens and client info, properly setting token expiry."""
+        logging.debug(f"[OAuth] Loading stored tokens for user={self.user_id or self.session_id}")
+
         # Call parent's _initialize to load tokens and client info
         await super()._initialize()
 
         # If tokens were loaded and have expires_in, update the context's token_expiry_time
         if self.context.current_tokens and self.context.current_tokens.expires_in:
             self.context.update_token_expiry(self.context.current_tokens)
+            logging.info(f"[OAuth] Loaded cached tokens (expires in {self.context.current_tokens.expires_in}s)")
+        elif self.context.current_tokens:
+            logging.info(f"[OAuth] Loaded cached tokens (no expiry)")
+        else:
+            logging.debug(f"[OAuth] No cached tokens found, will perform fresh OAuth flow")
 
     async def redirect_handler(self, authorization_url: str) -> None:
         """
@@ -205,25 +226,38 @@ class ClientOAuth(OAuthClientProvider):
         This is kept from the base OAuth implementation to automatically
         open the authorization URL in the user's browser.
         """
+        logging.info(f"[OAuth] Starting authorization flow for user={self.user_id or self.session_id}")
+        logging.debug(f"[OAuth] Authorization URL: {authorization_url}")
 
         # Pre-flight check to detect invalid client_id before opening browser
+        logging.debug(f"[OAuth] Performing pre-flight check to authorization endpoint")
         async with httpx.AsyncClient() as client:
-            response = await client.get(authorization_url, follow_redirects=False)
+            try:
+                response = await client.get(authorization_url, follow_redirects=False, timeout=10.0)
+                logging.debug(f"[OAuth] Pre-flight response status: {response.status_code}")
 
-            # Check for client not found error (400 typically means bad client_id)
-            if response.status_code == 400:
-                raise ClientNotFoundError(
-                    "OAuth client not found - cached credentials may be stale"
-                )
+                # Check for client not found error (400 typically means bad client_id)
+                if response.status_code == 400:
+                    logging.error(f"[OAuth] OAuth client not found (400) - cached credentials may be stale")
+                    raise ClientNotFoundError(
+                        "OAuth client not found - cached credentials may be stale"
+                    )
 
-            # OAuth typically returns redirects, but some providers return 200 with HTML login pages
-            if response.status_code not in (200, 302, 303, 307, 308):
-                raise RuntimeError(
-                    f"Unexpected authorization response: {response.status_code}"
-                )
+                # OAuth typically returns redirects, but some providers return 200 with HTML login pages
+                if response.status_code not in (200, 302, 303, 307, 308):
+                    logging.error(f"[OAuth] Unexpected authorization response: {response.status_code}")
+                    raise RuntimeError(
+                        f"Unexpected authorization response: {response.status_code}"
+                    )
 
-        logging.info(f"Opening OAuth authorization URL in browser: {authorization_url}")
+                logging.info(f"[OAuth] Pre-flight check passed (status {response.status_code})")
+            except httpx.RequestError as e:
+                logging.error(f"[OAuth] Pre-flight check failed: {e}")
+                raise
+
+        logging.info(f"[OAuth] Opening authorization URL in browser")
         webbrowser.open(authorization_url)
+        logging.info(f"[OAuth] Waiting for user to complete authorization in browser...")
 
     async def callback_handler(self) -> tuple[str, str | None]:
         """
@@ -232,11 +266,13 @@ class ClientOAuth(OAuthClientProvider):
         Creates a local callback server that listens on the configured port.
         In production, nginx forwards the public callback URL to this local server.
         """
+        logging.info(f"[OAuth] Setting up callback server for user={self.user_id or self.session_id}")
 
         # Create a future to capture the OAuth response
         response_future = asyncio.get_running_loop().create_future()
 
         # Create local callback server
+        logging.debug(f"[OAuth] Creating callback server on port {self.redirect_port}")
         server: Server = create_oauth_callback_server(
             port=self.redirect_port,
             server_url=self.server_base_url,
@@ -247,21 +283,29 @@ class ClientOAuth(OAuthClientProvider):
         async with anyio.create_task_group() as tg:
             tg.start_soon(server.serve)
             logging.info(
-                f"🎧 OAuth callback server listening on http://localhost:{self.redirect_port}/callback"
+                f"[OAuth] 🎧 Callback server listening on http://localhost:{self.redirect_port}/callback"
             )
+            logging.info(f"[OAuth] Waiting for OAuth provider to redirect back...")
 
             TIMEOUT = 300.0  # 5 minute timeout
             try:
                 with anyio.fail_after(TIMEOUT):
+                    logging.debug(f"[OAuth] Waiting for callback (timeout: {TIMEOUT}s)")
                     auth_code, state = await response_future
+                    logging.info(f"[OAuth] ✅ Received authorization code (length: {len(auth_code) if auth_code else 0})")
+                    logging.debug(f"[OAuth] State parameter: {state}")
                     return auth_code, state
             except TimeoutError:
+                logging.error(f"[OAuth] ❌ Callback timed out after {TIMEOUT} seconds")
                 raise TimeoutError(f"OAuth callback timed out after {TIMEOUT} seconds")
             finally:
+                logging.debug(f"[OAuth] Shutting down callback server")
                 server.should_exit = True
                 await asyncio.sleep(0.1)  # Allow server to shut down gracefully
                 tg.cancel_scope.cancel()
+                logging.debug(f"[OAuth] Callback server stopped")
 
+        logging.error(f"[OAuth] ❌ OAuth callback handler could not be started")
         raise RuntimeError("OAuth callback handler could not be started")
 
     async def async_auth_flow(
@@ -272,8 +316,12 @@ class ClientOAuth(OAuthClientProvider):
         If the OAuth flow fails due to invalid/stale client credentials,
         clears the cache and retries once with fresh registration.
         """
+        logging.debug(f"[OAuth] Starting auth flow for user={self.user_id or self.session_id}")
+        logging.debug(f"[OAuth] Request URL: {request.url}")
+
         try:
             # First attempt with potentially cached credentials
+            logging.debug(f"[OAuth] Attempting auth flow (first attempt)")
             gen = super().async_auth_flow(request)
             response = None
             while True:
@@ -281,12 +329,14 @@ class ClientOAuth(OAuthClientProvider):
                     yielded_request = await gen.asend(response)
                     response = yield yielded_request
                 except StopAsyncIteration:
+                    logging.info(f"[OAuth] ✅ Auth flow completed successfully")
                     break
 
-        except ClientNotFoundError:
-            logging.debug(
-                "OAuth client not found on server, clearing cache and retrying..."
+        except ClientNotFoundError as e:
+            logging.warning(
+                f"[OAuth] OAuth client not found on server, clearing cache and retrying..."
             )
+            logging.debug(f"[OAuth] ClientNotFoundError details: {e}")
 
             # Clear cached state and retry once
             self._initialized = False
@@ -294,20 +344,23 @@ class ClientOAuth(OAuthClientProvider):
             # Try to clear storage if it supports it
             if hasattr(self.context.storage, "clear"):
                 try:
+                    logging.info(f"[OAuth] Clearing OAuth storage cache for retry")
                     self.context.storage.clear()
-                except Exception as e:
-                    logging.warning(f"Failed to clear OAuth storage cache: {e}")
+                    logging.info(f"[OAuth] Cache cleared successfully")
+                except Exception as clear_error:
+                    logging.error(f"[OAuth] Failed to clear OAuth storage cache: {clear_error}")
                     # Can't retry without clearing cache, re-raise original error
                     raise ClientNotFoundError(
                         "OAuth client not found and cache could not be cleared"
-                    ) from e
+                    ) from clear_error
             else:
-                logging.warning(
-                    "Storage does not support clear() - cannot retry with fresh credentials"
+                logging.error(
+                    f"[OAuth] Storage does not support clear() - cannot retry with fresh credentials"
                 )
                 # Can't retry without clearing cache, re-raise original error
                 raise
 
+            logging.info(f"[OAuth] Retrying auth flow with fresh credentials (second attempt)")
             gen = super().async_auth_flow(request)
             response = None
             while True:
@@ -315,6 +368,7 @@ class ClientOAuth(OAuthClientProvider):
                     yielded_request = await gen.asend(response)
                     response = yield yielded_request
                 except StopAsyncIteration:
+                    logging.info(f"[OAuth] ✅ Auth flow completed successfully on retry")
                     break
 
     @staticmethod
