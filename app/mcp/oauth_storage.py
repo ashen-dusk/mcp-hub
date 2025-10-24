@@ -12,22 +12,20 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional, Any
+from collections.abc import AsyncGenerator
 from urllib.parse import urlparse
 from pydantic import AnyHttpUrl
 from mcp.shared.auth import OAuthClientMetadata
 
-from fastmcp.client.auth.oauth import FileTokenStorage, default_cache_dir
-from fastmcp.client.auth import OAuth as BaseOAuth
-from fastmcp.utilities.http import find_available_port
+from fastmcp.client.auth.oauth import FileTokenStorage, default_cache_dir, ClientNotFoundError
+from fastmcp.client.oauth_callback import create_oauth_callback_server
 from mcp.client.auth import OAuthClientProvider
-import webbrowser
-import httpx
-from fastmcp.client.auth.oauth import ClientNotFoundError
+from uvicorn.server import Server
 
 import asyncio
 import anyio
-from fastmcp.client.oauth_callback import create_oauth_callback_server
-from uvicorn.server import Server
+import webbrowser
+import httpx
 
 class ClientTokenStorage(FileTokenStorage):
     """
@@ -83,22 +81,20 @@ class ClientTokenStorage(FileTokenStorage):
             logging.info(f"Cleared all tokens for user: {identifier}")
 
 
-class ClientOAuth(BaseOAuth):
+class ClientOAuth(OAuthClientProvider):
     """
     Production-ready OAuth implementation with user-isolated token storage.
 
-    Supports configurable public callback URLs for nginx reverse proxy setups.
-    In production, the OAuth provider redirects to a public URL (e.g.,
-    https://api.quicklit.in/gen-api/auth_callback), and nginx forwards
-    this to the local callback server.
-
-    Environment variables:
-        OAUTH_CALLBACK_URL: Public callback URL (optional, defaults to localhost)
-        OAUTH_CALLBACK_PORT: Port for local callback server (optional, default: 8293)
+    Uses a fixed redirect URI (https://api.quicklit.in/auth-callback) that should be
+    configured in nginx to forward to the local callback server.
 
     This ensures that each user/session has their own OAuth tokens,
     preventing token sharing across different users.
     """
+
+    # Fixed redirect URI for production
+    REDIRECT_URI = "https://api.quicklit.in/auth-callback"
+    DEFAULT_CALLBACK_PORT = 8293
 
     def __init__(
         self,
@@ -107,51 +103,33 @@ class ClientOAuth(BaseOAuth):
         session_id: Optional[str] = None,
         client_name: str = "MCP Hub",
         callback_port: Optional[int] = None,
-        scopes: Optional[list] = None,
+        scopes: Optional[list[str]] = None,
+        additional_client_metadata: Optional[dict[str, Any]] = None,
     ):
         """
-        Initialize user-isolated OAuth with production callback support.
+        Initialize user-isolated OAuth with fixed production callback.
 
         Args:
-            mcp_url: The MCP server URL
-            user_id: The user identifier
-            session_id: The session identifier
-            client_name: OAuth client name
-            callback_port: Port for OAuth callback (overrides OAUTH_CALLBACK_PORT env)
-            scopes: OAuth scopes to request
+            mcp_url: Full URL to the MCP endpoint (e.g. "http://host/mcp/sse/")
+            user_id: The user identifier for token isolation
+            session_id: The session identifier for token isolation (used if user_id not available)
+            client_name: Name for this client during registration
+            callback_port: Port for local callback server (default: 8293)
+            scopes: OAuth scopes to request as a list of strings
+            additional_client_metadata: Extra fields for OAuthClientMetadata
         """
-        # Get configuration from environment
-        public_callback_url = os.getenv("OAUTH_CALLBACK_URL")
-        env_callback_port = os.getenv("OAUTH_CALLBACK_PORT", "8293")
-
-        # Determine callback port
-        if callback_port is None:
-            try:
-                callback_port = int(env_callback_port)
-            except ValueError:
-                callback_port = 8293
-
-        # Create user-isolated token storage directory
-        user_cache_dir = self._get_user_cache_dir(user_id, session_id)
-
         # Parse MCP URL
         parsed_url = urlparse(mcp_url)
         server_base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
-        # Determine redirect URI
-        if public_callback_url:
-            # Production: Use public URL with nginx forwarding
-            redirect_uri = public_callback_url
-            logging.info(f"Using public OAuth callback URL: {redirect_uri}")
-            logging.info(f"Local callback server will run on port: {callback_port}")
-            logging.info("Ensure nginx is configured to forward public URL to localhost:{callback_port}/callback")
-        else:
-            # Development: Use localhost
-            redirect_uri = f"http://localhost:{callback_port}/callback"
-            logging.info(f"Using localhost OAuth callback URL: {redirect_uri}")
+        # Set up redirect port for local callback server
+        self.redirect_port = callback_port or self.DEFAULT_CALLBACK_PORT
 
-        # Set up port for local callback server
-        self.redirect_port = callback_port
+        # Use fixed redirect URI
+        redirect_uri = self.REDIRECT_URI
+
+        logging.info(f"Using OAuth redirect URI: {redirect_uri}")
+        logging.info(f"Local callback server will run on port: {self.redirect_port}")
 
         # Prepare scopes
         scopes_str: str
@@ -169,12 +147,14 @@ class ClientOAuth(BaseOAuth):
             grant_types=["authorization_code", "refresh_token"],
             response_types=["code"],
             scope=scopes_str,
+            **(additional_client_metadata or {}),
         )
 
-        # Create server-specific token storage
-        storage = FileTokenStorage(
+        # Create user-isolated token storage
+        storage = ClientTokenStorage(
             server_url=server_base_url,
-            cache_dir=user_cache_dir
+            user_id=user_id,
+            session_id=session_id
         )
 
         # Store metadata for callback handler
@@ -182,10 +162,8 @@ class ClientOAuth(BaseOAuth):
         self.user_id = user_id
         self.session_id = session_id
 
-        # Initialize parent class with custom redirect_handler and callback_handler
-        # We need to call the grandparent's __init__ to avoid the default redirect_uri
-        OAuthClientProvider.__init__(
-            self,
+        # Initialize parent class
+        super().__init__(
             server_url=server_base_url,
             client_metadata=client_metadata,
             storage=storage,
@@ -193,7 +171,16 @@ class ClientOAuth(BaseOAuth):
             callback_handler=self.callback_handler,
         )
 
-        logging.info(f"Initialized OAuth for: {user_id or session_id} with cache dir: {user_cache_dir}")
+        logging.info(f"Initialized OAuth for: {user_id or session_id}")
+
+    async def _initialize(self) -> None:
+        """Load stored tokens and client info, properly setting token expiry."""
+        # Call parent's _initialize to load tokens and client info
+        await super()._initialize()
+
+        # If tokens were loaded and have expires_in, update the context's token_expiry_time
+        if self.context.current_tokens and self.context.current_tokens.expires_in:
+            self.context.update_token_expiry(self.context.current_tokens)
 
     async def redirect_handler(self, authorization_url: str) -> None:
         """
@@ -260,6 +247,59 @@ class ClientOAuth(BaseOAuth):
                 tg.cancel_scope.cancel()
 
         raise RuntimeError("OAuth callback handler could not be started")
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        """HTTPX auth flow with automatic retry on stale cached credentials.
+
+        If the OAuth flow fails due to invalid/stale client credentials,
+        clears the cache and retries once with fresh registration.
+        """
+        try:
+            # First attempt with potentially cached credentials
+            gen = super().async_auth_flow(request)
+            response = None
+            while True:
+                try:
+                    yielded_request = await gen.asend(response)
+                    response = yield yielded_request
+                except StopAsyncIteration:
+                    break
+
+        except ClientNotFoundError:
+            logging.debug(
+                "OAuth client not found on server, clearing cache and retrying..."
+            )
+
+            # Clear cached state and retry once
+            self._initialized = False
+
+            # Try to clear storage if it supports it
+            if hasattr(self.context.storage, "clear"):
+                try:
+                    self.context.storage.clear()
+                except Exception as e:
+                    logging.warning(f"Failed to clear OAuth storage cache: {e}")
+                    # Can't retry without clearing cache, re-raise original error
+                    raise ClientNotFoundError(
+                        "OAuth client not found and cache could not be cleared"
+                    ) from e
+            else:
+                logging.warning(
+                    "Storage does not support clear() - cannot retry with fresh credentials"
+                )
+                # Can't retry without clearing cache, re-raise original error
+                raise
+
+            gen = super().async_auth_flow(request)
+            response = None
+            while True:
+                try:
+                    yielded_request = await gen.asend(response)
+                    response = yield yielded_request
+                except StopAsyncIteration:
+                    break
 
     @staticmethod
     def _get_user_cache_dir(user_id: Optional[str] = None, session_id: Optional[str] = None) -> Path:

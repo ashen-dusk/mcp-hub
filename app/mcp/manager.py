@@ -207,7 +207,7 @@ class MCPServerManager:
                         user_id=user.username if user else None,
                         session_id=session_id,
                     )
-                    await storage.clear()
+                    storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
 
@@ -491,7 +491,7 @@ class MCPServerManager:
                         user_id=None,
                         session_id=session_id,
                     )
-                    await storage.clear()
+                    storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
 
