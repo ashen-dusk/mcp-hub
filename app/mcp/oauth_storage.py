@@ -26,6 +26,79 @@ import asyncio
 import anyio
 import webbrowser
 import httpx
+from collections.abc import AsyncGenerator
+from mcp.shared.auth import OAuthToken
+
+
+class SimpleTokenAuth(httpx.Auth):
+    """
+    Simple token-based auth that uses existing OAuth tokens without callback handlers.
+
+    This is used for reconnecting to servers where tokens already exist,
+    avoiding the need to set up local callback servers or trigger OAuth flows.
+    """
+
+    def __init__(self, server_url: str, user_id: Optional[str] = None, session_id: Optional[str] = None):
+        """
+        Initialize simple token auth.
+
+        Args:
+            server_url: The MCP server URL
+            user_id: The user identifier
+            session_id: The session identifier
+        """
+        self.storage = ClientTokenStorage(
+            server_url=server_url,
+            user_id=user_id,
+            session_id=session_id
+        )
+        self._tokens: Optional[OAuthToken] = None
+
+    async def _ensure_tokens(self) -> Optional[OAuthToken]:
+        """Load tokens from storage if not already loaded."""
+        if self._tokens is None:
+            # Load tokens from storage using the storage's get_tokens method
+            try:
+                self._tokens = await self.storage.get_tokens()
+                if self._tokens:
+                    logging.debug(f"[SimpleTokenAuth] Loaded existing tokens from storage")
+                else:
+                    logging.warning(f"[SimpleTokenAuth] No tokens found in storage")
+            except Exception as e:
+                logging.error(f"[SimpleTokenAuth] Failed to load tokens: {e}")
+        return self._tokens
+
+    def auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        """Synchronous auth flow (not supported, use async_auth_flow instead)."""
+        raise NotImplementedError("Use async_auth_flow instead")
+
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        """
+        Add OAuth token to request headers.
+
+        Args:
+            request: The HTTP request to authenticate
+
+        Yields:
+            Authenticated request
+        """
+        tokens = await self._ensure_tokens()
+
+        if not tokens or not tokens.access_token:
+            logging.error(f"[SimpleTokenAuth] No access token available")
+            raise RuntimeError("No OAuth tokens available. Please reconnect to the server.")
+
+        # Add Authorization header
+        request.headers["Authorization"] = f"Bearer {tokens.access_token}"
+
+        # Yield the authenticated request
+        response = yield request
+
+        # If we get 401, tokens might be expired (but we don't auto-refresh in simple mode)
+        if response.status_code == 401:
+            logging.warning(f"[SimpleTokenAuth] Got 401 Unauthorized - tokens may be expired")
+            # Don't retry, just let it fail so user knows to re-authorize
+
 
 class ClientTokenStorage(FileTokenStorage):
     """

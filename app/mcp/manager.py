@@ -16,7 +16,7 @@ from fastmcp.client.auth.oauth import FileTokenStorage
 
 from .models import MCPServer
 from .redis_manager import mcp_redis
-from .oauth_storage import ClientTokenStorage, ClientOAuth
+from .oauth_storage import ClientTokenStorage, ClientOAuth, SimpleTokenAuth
 from .utils import patch_tools_schema, serialize_tools
 from .adapter_builder import MCPAdapterBuilder
 from .constants import (
@@ -396,6 +396,10 @@ class MCPServerManager:
         """
         Connect to server and fetch tools (with or without OAuth).
 
+        For OAuth servers, this uses SimpleTokenAuth which loads existing tokens
+        from storage without setting up callback handlers. The OAuth flow itself
+        is handled separately via the API endpoint approach.
+
         Args:
             server: MCPServer instance
             session_id: Session identifier
@@ -404,15 +408,14 @@ class MCPServerManager:
             List of tool objects
         """
         if server.requires_oauth2:
-            oauth = ClientOAuth(
-                mcp_url=server.url,
+            # Use SimpleTokenAuth to load existing tokens without callback handlers
+            # The OAuth flow is handled via API endpoint (oauth_helper.py)
+            auth = SimpleTokenAuth(
+                server_url=server.url,
                 user_id=None,  # Could extract from server.owner if needed
                 session_id=session_id,
-                client_name=OAUTH_CLIENT_NAME,
-                callback_port=OAUTH_CALLBACK_PORT,
-                scopes=OAUTH_DEFAULT_SCOPES,
             )
-            async with FastMCPClient(server.url, auth=oauth) as client:
+            async with FastMCPClient(server.url, auth=auth) as client:
                 await asyncio.wait_for(client.ping(), timeout=MCP_CLIENT_TIMEOUT)
                 return await asyncio.wait_for(
                     client.list_tools(), timeout=TOOL_FETCH_TIMEOUT

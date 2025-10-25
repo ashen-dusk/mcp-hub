@@ -15,7 +15,6 @@ from app.mcp.redis_manager import mcp_redis
 from app.mcp.models import MCPServer
 from app.mcp.manager import mcp
 from app.mcp.oauth_helper import exchange_authorization_code
-import httpx
 
 def home(request):
     return HttpResponse("MCP Hub is running 🚀")
@@ -27,7 +26,6 @@ def health_check(request):
         "message": "Service is healthy"
     }
     return JsonResponse(data)
-
 
 # ============================================================================
 # OAuth Callback Endpoint
@@ -118,7 +116,6 @@ async def oauth_callback(request):
             "error": "Internal server error",
             "details": str(e)
         }, status=500)
-
 
 async def handle_token_exchange(
     server_name: str,
@@ -249,7 +246,6 @@ async def agui_langgraph_handler(request):
             {"error": "Internal server error", "details": str(e)},
             status=500
         )
-
 
 # ============================================================================
 # Audio Transcription Endpoint
