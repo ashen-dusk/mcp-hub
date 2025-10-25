@@ -14,8 +14,8 @@ from openai import OpenAI
 from app.mcp.redis_manager import mcp_redis
 from app.mcp.models import MCPServer
 from app.mcp.manager import mcp
+from app.mcp.oauth_helper import exchange_authorization_code
 import httpx
-
 
 def home(request):
     return HttpResponse("MCP Hub is running 🚀")
@@ -65,7 +65,7 @@ async def oauth_callback(request):
                 'error': error,
                 'error_description': error_description
             })
-            return HttpResponseRedirect(f"{frontend_url}/mcp/oauth-error?{error_params}")
+            return HttpResponseRedirect(f"{frontend_url}/mcp?{error_params}")
 
         # Validate required parameters
         if not code or not state:
@@ -91,7 +91,7 @@ async def oauth_callback(request):
         # Trigger background task to complete OAuth flow
         # We do this in background so we can immediately redirect the user
         asyncio.create_task(
-            complete_oauth_flow(
+            handle_token_exchange(
                 server_name=server_name,
                 session_id=session_id,
                 user_id=user_id,
@@ -100,76 +100,17 @@ async def oauth_callback(request):
             )
         )
 
-        # Redirect to frontend success page
+        # Redirect to frontend MCP page
         frontend_url = os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
         success_params = urlencode({
             'server': server_name,
             'step': 'success'
         })
-        redirect_url = f"{frontend_url}/mcp/connectors?{success_params}"
+        redirect_url = f"{frontend_url}/mcp?{success_params}"
 
         logging.info(f"[OAuth Callback] Redirecting to: {redirect_url}")
 
-        # Return HTML with auto-redirect and loading message
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>OAuth Success</title>
-            <meta http-equiv="refresh" content="0;url={redirect_url}">
-            <style>
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    margin: 0;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                }}
-                .container {{
-                    text-align: center;
-                    background: white;
-                    padding: 3rem;
-                    border-radius: 1rem;
-                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                }}
-                .checkmark {{
-                    font-size: 4rem;
-                    color: #10b981;
-                    margin-bottom: 1rem;
-                }}
-                h1 {{ color: #1f2937; margin: 0 0 0.5rem 0; }}
-                p {{ color: #6b7280; margin: 0; }}
-                .spinner {{
-                    margin-top: 1.5rem;
-                    border: 3px solid #f3f4f6;
-                    border-top: 3px solid #667eea;
-                    border-radius: 50%;
-                    width: 40px;
-                    height: 40px;
-                    animation: spin 1s linear infinite;
-                    margin-left: auto;
-                    margin-right: auto;
-                }}
-                @keyframes spin {{
-                    0% {{ transform: rotate(0deg); }}
-                    100% {{ transform: rotate(360deg); }}
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="checkmark">✓</div>
-                <h1>Authorization Successful!</h1>
-                <p>Connecting to MCP server...</p>
-                <div class="spinner"></div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return HttpResponse(html_content, content_type='text/html')
+        return HttpResponseRedirect(redirect_url)
 
     except Exception as e:
         logging.exception(f"[OAuth Callback] Unexpected error: {e}")
@@ -179,7 +120,7 @@ async def oauth_callback(request):
         }, status=500)
 
 
-async def complete_oauth_flow(
+async def handle_token_exchange(
     server_name: str,
     session_id: str,
     user_id: str,
@@ -213,7 +154,6 @@ async def complete_oauth_flow(
             return
 
         # Step 1: Exchange authorization code for tokens
-        from app.mcp.oauth_helper import exchange_authorization_code
         success, message = await exchange_authorization_code(
             server=server,
             code=code,

@@ -7,11 +7,23 @@ Properly handles OAuth discovery and token exchange using MCP library primitives
 import logging
 import secrets
 import os
-from urllib.parse import urlencode
 from typing import Tuple, Optional
+from urllib.parse import urlencode, urlparse, urljoin
+
 import httpx
+from pydantic import AnyHttpUrl
+
+from mcp.client.auth import OAuthClientProvider
+from mcp.shared.auth import (
+    OAuthClientMetadata,
+    OAuthClientInformationFull,
+    OAuthToken,
+    OAuthMetadata,
+)
+
 from .models import MCPServer
 from .redis_manager import mcp_redis
+from .oauth_storage import ClientTokenStorage
 
 
 async def initiate_oauth_flow(
@@ -90,12 +102,6 @@ async def build_authorization_url(
         redirect_uri = f"{backend_url}/api/oauth-callback"
 
         logging.info(f"[OAuth Helper] Starting OAuth discovery for {server.name}")
-
-        # Import MCP OAuth primitives
-        from mcp.client.auth import OAuthClientProvider, OAuthContext
-        from mcp.shared.auth import OAuthClientMetadata
-        from pydantic import AnyHttpUrl
-        from .oauth_storage import ClientTokenStorage
 
         # Create client metadata
         client_metadata = OAuthClientMetadata(
@@ -192,7 +198,6 @@ async def build_authorization_url(
         if oauth_provider.context.oauth_metadata.authorization_endpoint:
             auth_endpoint = str(oauth_provider.context.oauth_metadata.authorization_endpoint)
         else:
-            from urllib.parse import urljoin
             auth_base_url = oauth_provider.context.get_authorization_base_url(server.url)
             auth_endpoint = urljoin(auth_base_url, "/authorize")
 
@@ -241,9 +246,6 @@ async def exchange_authorization_code(
     try:
         logging.info(f"[OAuth Helper] Exchanging authorization code for {server.name}")
 
-        from .oauth_storage import ClientTokenStorage
-        from mcp.shared.auth import OAuthToken
-
         # Create storage to load client info
         storage = ClientTokenStorage(
             server_url=server.url,
@@ -261,14 +263,12 @@ async def exchange_authorization_code(
             logging.error("[OAuth Helper] No client info in storage - OAuth not initialized")
             return False, "OAuth client not registered. Please try connecting again."
 
-        from mcp.shared.auth import OAuthClientInformationFull
         client_info = OAuthClientInformationFull.model_validate(client_info_data)
 
         # Load OAuth metadata to get token endpoint
         # We need to discover it again since we don't cache it
         async with httpx.AsyncClient() as client:
             # Try to discover OAuth metadata
-            from urllib.parse import urlparse, urljoin
             parsed = urlparse(server.url)
             base_url = f"{parsed.scheme}://{parsed.netloc}"
 
@@ -283,7 +283,6 @@ async def exchange_authorization_code(
                 try:
                     resp = await client.get(discovery_url, timeout=10.0)
                     if resp.status_code == 200:
-                        from mcp.shared.auth import OAuthMetadata
                         metadata = OAuthMetadata.model_validate_json(await resp.aread())
                         if metadata.token_endpoint:
                             token_endpoint = str(metadata.token_endpoint)
