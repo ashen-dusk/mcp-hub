@@ -237,6 +237,89 @@ class MCPRedisManager:
             logging.error(f"Redis health check failed: {e}")
             return False
 
+    # ──────────────────────────────────────────────────────────────────────
+    # OAuth Session Management
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _build_oauth_session_key(self, state: str) -> str:
+        """
+        Build a Redis key for OAuth session data.
+
+        Args:
+            state: OAuth state parameter
+
+        Returns:
+            Formatted Redis key
+        """
+        return f"{REDIS_KEY_PREFIX}:oauth:session:{state}"
+
+    async def store_oauth_session(
+        self,
+        state: str,
+        server_name: str,
+        session_id: str,
+        user_id: Optional[str] = None,
+        ttl: int = 600  # 10 minutes
+    ) -> None:
+        """
+        Store OAuth session data in Redis.
+
+        This data links the OAuth state parameter to the server connection context.
+
+        Args:
+            state: OAuth state parameter
+            server_name: Name of the MCP server
+            session_id: Session identifier
+            user_id: Optional user identifier
+            ttl: Time-to-live in seconds (default: 600 = 10 minutes)
+        """
+        key = self._build_oauth_session_key(state)
+        data = {
+            "state": state,
+            "server_name": server_name,
+            "session_id": session_id,
+            "user_id": user_id,
+            "timestamp": timezone.now().isoformat()
+        }
+        await self.redis_client.set(key, safe_json_dumps(data), ex=ttl)
+        logging.info(f"[OAuth Redis] Stored session for state: {state[:8]}..., server: {server_name}")
+
+    async def get_oauth_session(self, state: str) -> Optional[Dict[str, str]]:
+        """
+        Retrieve OAuth session data from Redis.
+
+        Args:
+            state: OAuth state parameter
+
+        Returns:
+            Dictionary with session data if found, None otherwise
+        """
+        key = self._build_oauth_session_key(state)
+        data_json = await self.redis_client.get(key)
+
+        if data_json:
+            try:
+                data = json.loads(data_json)
+                logging.info(f"[OAuth Redis] Retrieved session for state: {state[:8]}...")
+                return data
+            except json.JSONDecodeError as e:
+                logging.error(f"[OAuth Redis] Failed to decode session data: {e}")
+                return None
+
+        logging.debug(f"[OAuth Redis] No session found for state: {state[:8]}...")
+        return None
+
+    async def delete_oauth_session(self, state: str) -> None:
+        """
+        Delete OAuth session data from Redis.
+
+        Args:
+            state: OAuth state parameter
+        """
+        key = self._build_oauth_session_key(state)
+        await self.redis_client.delete(key)
+        logging.info(f"[OAuth Redis] Deleted session for state: {state[:8]}...")
+
 
 # Global instance
 mcp_redis = MCPRedisManager()

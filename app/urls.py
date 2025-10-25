@@ -9,6 +9,9 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('health/', views.health_check, name='health_check'),
 
+    # OAuth callback endpoint (no trailing slash to match redirect_uri exactly)
+    path('oauth-callback', views.oauth_callback, name='oauth_callback'),
+
     # Audio Transcription endpoint
     path('transcribe/', views.transcribe_audio, name='transcribe_audio'),
 

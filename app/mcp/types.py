@@ -76,3 +76,12 @@ class DisconnectResult:
 
 
 
+
+@strawberry.type
+class OAuthInitResult:
+    """Result of initiating OAuth flow for an MCP server."""
+    success: bool
+    message: str
+    authorization_url: Optional[str]
+    state: Optional[str]
+    server: Optional[MCPServerType]

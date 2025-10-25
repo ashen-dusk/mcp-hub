@@ -21,6 +21,7 @@ from app.mcp.types import (
     MCPServerFilter,
     ConnectionResult,
     DisconnectResult,
+    OAuthInitResult,
     ToolInfo,
     JSON
 )
@@ -149,3 +150,63 @@ class Mutation:
             server=server,
         )
     
+    @strawberry.mutation
+    async def initiate_oauth_connection(self, info: Info, name: str) -> OAuthInitResult:
+        """
+        Initiate OAuth flow for an MCP server.
+        
+        Returns the authorization URL that the frontend should automatically redirect to.
+        """
+        from app.mcp.oauth_helper import initiate_oauth_flow
+        
+        session_key = _get_user_context(info)
+        user = info.context.request.user
+        user_id = user.username if user and not isinstance(user, AnonymousUser) and user.is_authenticated else None
+        
+        try:
+            # Get server from database
+            server = await MCPServer.objects.aget(name=name)
+            
+            # Validate server requires OAuth
+            if not server.requires_oauth2:
+                return OAuthInitResult(
+                    success=False,
+                    message=f"Server {name} does not require OAuth",
+                    authorization_url=None,
+                    state=None,
+                    server=server
+                )
+            
+            # Initiate OAuth flow
+            success, message, authorization_url, state = await initiate_oauth_flow(
+                server=server,
+                session_id=session_key,
+                user_id=user_id
+            )
+            
+            return OAuthInitResult(
+                success=success,
+                message=message,
+                authorization_url=authorization_url,
+                state=state,
+                server=server if success else None
+            )
+            
+        except MCPServer.DoesNotExist:
+            return OAuthInitResult(
+                success=False,
+                message=f"Server {name} not found",
+                authorization_url=None,
+                state=None,
+                server=None
+            )
+        except Exception as e:
+            logging.exception(f"Error initiating OAuth for {name}: {e}")
+            return OAuthInitResult(
+                success=False,
+                message=f"Failed to initiate OAuth: {str(e)}",
+                authorization_url=None,
+                state=None,
+                server=None
+            )
+
