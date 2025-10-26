@@ -15,7 +15,7 @@ from strawberry.types import Info
 from app.graphql.permissions import IsAuthenticated
 from app.mcp.manager import mcp
 from app.mcp.models import MCPServer
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth.models import AnonymousUser
 from app.mcp.types import (
     MCPServerType,
     MCPServerFilter,
@@ -98,7 +98,6 @@ class Mutation:
         query_params: Optional[JSON] = None, requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False, description: Optional[str] = None,
     ) -> MCPServerType:
-        # get user from request context
         user = info.context.request.user
         return await mcp.asave_server(
             name, transport, user, url, command, args, headers, query_params,
@@ -107,7 +106,6 @@ class Mutation:
         
     @strawberry.mutation(permission_classes=[IsAuthenticated])
     async def remove_mcp_server(self, info: Info, name: str) -> bool:
-        # Get user from request context
         user = info.context.request.user
         return await mcp.aremove_server(name, user=user)
 
@@ -122,11 +120,12 @@ class Mutation:
         """
         Connect to an MCP server, automatically handling OAuth if required.
 
-        This mutation intelligently handles both OAuth and non-OAuth servers:
+        This mutation handles both OAuth and non-OAuth servers:
         - If OAuth is required and tokens don't exist: Returns auth URL for redirect
         - If OAuth is required and tokens exist: Connects using existing tokens
         - If OAuth is not required: Connects normally
 
+        Note: Later dependency on requires_oauth field needs to be removed and checked by sending a http request to the server.
         Frontend should check `requires_auth` and redirect to `authorization_url` if true.
         """
         session_key = _get_user_context(info)

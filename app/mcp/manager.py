@@ -16,7 +16,7 @@ from fastmcp.client.auth.oauth import FileTokenStorage
 
 from .models import MCPServer
 from .redis_manager import mcp_redis
-from .oauth_storage import ClientTokenStorage, ClientOAuth, SimpleTokenAuth
+from .oauth_storage import ClientTokenStorage, SimpleTokenAuth
 from .utils import patch_tools_schema, serialize_tools
 from .adapter_builder import MCPAdapterBuilder
 from .constants import (
