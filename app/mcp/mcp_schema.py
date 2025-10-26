@@ -21,11 +21,11 @@ from app.mcp.types import (
     MCPServerFilter,
     ConnectionResult,
     DisconnectResult,
-    OAuthInitResult,
-    ToolInfo,
     JSON
 )
 from app.mcp.utils import generate_anonymous_session_key
+from app.mcp.oauth_helper import initiate_oauth_flow
+from app.mcp.oauth_storage import ClientTokenStorage
 
 
 def _get_user_context(info: Info) -> str:
@@ -119,14 +119,117 @@ class Mutation:
 
     @strawberry.mutation
     async def connect_mcp_server(self, info: Info, name: str) -> ConnectionResult:
+        """
+        Connect to an MCP server, automatically handling OAuth if required.
+
+        This mutation intelligently handles both OAuth and non-OAuth servers:
+        - If OAuth is required and tokens don't exist: Returns auth URL for redirect
+        - If OAuth is required and tokens exist: Connects using existing tokens
+        - If OAuth is not required: Connects normally
+
+        Frontend should check `requires_auth` and redirect to `authorization_url` if true.
+        """
         session_key = _get_user_context(info)
-        success, message, server = await mcp.connect_server(name, session_id=session_key)
-        return ConnectionResult(
-            success=success,
-            message=f"Successfully connected to {name}" if success else message,
-            connection_status="CONNECTED" if success else "FAILED",
-            server=server,
-        )
+        user = info.context.request.user
+        user_id = user.username if user and not isinstance(user, AnonymousUser) and user.is_authenticated else None
+
+        try:
+            # Get server from database
+            server = await MCPServer.objects.aget(name=name)
+
+            # Check if OAuth is required
+            if server.requires_oauth2 and server.url:
+                # Check if tokens already exist
+                storage = ClientTokenStorage(
+                    server_url=server.url,
+                    user_id=user_id,
+                    session_id=session_key
+                )
+
+                try:
+                    existing_tokens = await storage.get_tokens()
+                except Exception:
+                    existing_tokens = None
+
+                # If no tokens exist, initiate OAuth flow
+                if not existing_tokens:
+                    logging.info(f"[connect_mcp_server] OAuth required for {name}, initiating OAuth flow")
+                    success, message, authorization_url, state = await initiate_oauth_flow(
+                        server=server,
+                        session_id=session_key,
+                        user_id=user_id
+                    )
+
+                    logging.info(f"[connect_mcp_server] OAuth initiation result - success: {success}, auth_url: {authorization_url[:50] if authorization_url else None}...")
+
+                    if not success:
+                        logging.error(f"[connect_mcp_server] OAuth initiation failed: {message}")
+                        return ConnectionResult(
+                            success=False,
+                            message=message,
+                            connection_status="FAILED",
+                            server=server,
+                            requires_auth=True,
+                            authorization_url=None,
+                            state=None
+                        )
+
+                    # Return result with authorization URL for frontend to redirect
+                    logging.info(f"[connect_mcp_server] Returning OAuth redirect response with requiresAuth=True")
+                    result = ConnectionResult(
+                        success=False,  # Not yet connected - need OAuth first
+                        message="OAuth authorization required",
+                        connection_status="DISCONNECTED",
+                        server=server,
+                        requires_auth=True,
+                        authorization_url=authorization_url,
+                        state=state
+                    )
+                    logging.info(f"[connect_mcp_server] Result: requiresAuth={result.requires_auth}, authUrl={result.authorization_url[:50] if result.authorization_url else None}...")
+                    return result
+                else:
+                    logging.info(f"OAuth tokens exist for {name}, connecting with existing tokens")
+
+            # Either no OAuth required, or OAuth tokens exist - proceed with connection
+            success, message, connected_server = await mcp.connect_server(name, session_id=session_key)
+            return ConnectionResult(
+                success=success,
+                message=f"Successfully connected to {name}" if success else message,
+                connection_status="CONNECTED" if success else "FAILED",
+                server=connected_server or server,
+                requires_auth=False,
+                authorization_url=None,
+                state=None
+            )
+
+        except MCPServer.DoesNotExist:
+            # Create a minimal server object for error response
+            error_server = MCPServer(name=name, transport="", connection_status="FAILED")
+            return ConnectionResult(
+                success=False,
+                message=f"Server {name} not found",
+                connection_status="FAILED",
+                server=error_server,
+                requires_auth=False,
+                authorization_url=None,
+                state=None
+            )
+        except Exception as e:
+            logging.exception(f"Error connecting to server {name}: {e}")
+            try:
+                server = await MCPServer.objects.aget(name=name)
+            except Exception:
+                server = MCPServer(name=name, transport="", connection_status="FAILED")
+
+            return ConnectionResult(
+                success=False,
+                message=f"Connection failed: {str(e)}",
+                connection_status="FAILED",
+                server=server,
+                requires_auth=False,
+                authorization_url=None,
+                state=None
+            )
 
     @strawberry.mutation
     async def disconnect_mcp_server(self, info: Info, name: str) -> DisconnectResult:
@@ -140,73 +243,105 @@ class Mutation:
 
     @strawberry.mutation
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
-        session_key = _get_user_context(info)
-        status, server = await mcp.arestart_mcp_server(name, session_id=session_key)
-        success = status == "OK"
-        return ConnectionResult(
-            success=success,
-            message=f"Successfully restarted {name}" if success else f"restart failed: {status}",
-            connection_status="CONNECTED" if success else "FAILED",
-            server=server,
-        )
-    
-    @strawberry.mutation
-    async def initiate_oauth_connection(self, info: Info, name: str) -> OAuthInitResult:
         """
-        Initiate OAuth flow for an MCP server.
-        
-        Returns the authorization URL that the frontend should automatically redirect to.
+        Restart MCP server by clearing OAuth tokens and reconnecting.
+
+        This mutation intelligently handles OAuth servers:
+        - Clears existing OAuth tokens
+        - If OAuth is required: Returns auth URL for re-authorization
+        - If OAuth is not required: Reconnects immediately
         """
-        from app.mcp.oauth_helper import initiate_oauth_flow
-        
         session_key = _get_user_context(info)
         user = info.context.request.user
         user_id = user.username if user and not isinstance(user, AnonymousUser) and user.is_authenticated else None
-        
+
         try:
             # Get server from database
             server = await MCPServer.objects.aget(name=name)
-            
-            # Validate server requires OAuth
-            if not server.requires_oauth2:
-                return OAuthInitResult(
-                    success=False,
-                    message=f"Server {name} does not require OAuth",
-                    authorization_url=None,
-                    state=None,
-                    server=server
+
+            # Clear OAuth tokens if applicable
+            if server.url and server.requires_oauth2:
+                try:
+                    storage = ClientTokenStorage(
+                        server_url=server.url,
+                        user_id=user_id,
+                        session_id=session_key,
+                    )
+                    storage.clear()  # Synchronous method
+                    logging.info(f"[restart_mcp_server] Cleared OAuth tokens for {name}")
+                except Exception as e:
+                    logging.warning(f"[restart_mcp_server] Failed to clear tokens for {name}: {e}")
+
+            # If OAuth is required, initiate OAuth flow (since we just cleared tokens)
+            if server.requires_oauth2 and server.url:
+                logging.info(f"[restart_mcp_server] OAuth required for {name}, initiating OAuth flow")
+                success, message, authorization_url, state = await initiate_oauth_flow(
+                    server=server,
+                    session_id=session_key,
+                    user_id=user_id
                 )
-            
-            # Initiate OAuth flow
-            success, message, authorization_url, state = await initiate_oauth_flow(
-                server=server,
-                session_id=session_key,
-                user_id=user_id
-            )
-            
-            return OAuthInitResult(
+
+                if not success:
+                    logging.error(f"[restart_mcp_server] OAuth initiation failed: {message}")
+                    return ConnectionResult(
+                        success=False,
+                        message=message,
+                        connection_status="FAILED",
+                        server=server,
+                        requires_auth=True,
+                        authorization_url=None,
+                        state=None
+                    )
+
+                # Return result with authorization URL for frontend to redirect
+                logging.info(f"[restart_mcp_server] Returning OAuth redirect response")
+                return ConnectionResult(
+                    success=False,  # Not yet connected - need OAuth first
+                    message="OAuth authorization required for restart",
+                    connection_status="DISCONNECTED",
+                    server=server,
+                    requires_auth=True,
+                    authorization_url=authorization_url,
+                    state=state
+                )
+
+            # Non-OAuth server: proceed with normal reconnection
+            success, message, connected_server = await mcp.connect_server(name, session_id=session_key)
+            return ConnectionResult(
                 success=success,
-                message=message,
-                authorization_url=authorization_url,
-                state=state,
-                server=server if success else None
+                message=f"Successfully restarted {name}" if success else message,
+                connection_status="CONNECTED" if success else "FAILED",
+                server=connected_server or server,
+                requires_auth=False,
+                authorization_url=None,
+                state=None
             )
-            
+
         except MCPServer.DoesNotExist:
-            return OAuthInitResult(
+            error_server = MCPServer(name=name, transport="", connection_status="FAILED")
+            return ConnectionResult(
                 success=False,
                 message=f"Server {name} not found",
+                connection_status="FAILED",
+                server=error_server,
+                requires_auth=False,
                 authorization_url=None,
-                state=None,
-                server=None
+                state=None
             )
         except Exception as e:
-            logging.exception(f"Error initiating OAuth for {name}: {e}")
-            return OAuthInitResult(
+            logging.exception(f"Error restarting server {name}: {e}")
+            try:
+                server = await MCPServer.objects.aget(name=name)
+            except Exception:
+                server = MCPServer(name=name, transport="", connection_status="FAILED")
+
+            return ConnectionResult(
                 success=False,
-                message=f"Failed to initiate OAuth: {str(e)}",
+                message=f"Restart failed: {str(e)}",
+                connection_status="FAILED",
+                server=server,
+                requires_auth=False,
                 authorization_url=None,
-                state=None,
-                server=None
+                state=None
             )
 

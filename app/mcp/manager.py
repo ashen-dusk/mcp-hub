@@ -470,62 +470,6 @@ class MCPServerManager:
             except MCPServer.DoesNotExist:
                 return False, f"Disconnect failed: {str(e)}", None
 
-    async def arestart_mcp_server(
-        self, name: str, session_id: Optional[str] = None
-    ) -> Tuple[str, Optional[MCPServer]]:
-        """
-        Restart server connection (clear OAuth tokens and reconnect).
-
-        Args:
-            name: Server name
-            session_id: Session identifier
-
-        Returns:
-            Tuple of (status_code, server_instance)
-        """
-        try:
-            server = await MCPServer.objects.aget(name=name)
-
-            # Clear OAuth tokens if applicable
-            if server.url and server.requires_oauth2:
-                try:
-                    storage = ClientTokenStorage(
-                        server_url=server.url,
-                        user_id=None,
-                        session_id=session_id,
-                    )
-                    storage.clear()
-                except Exception as e:
-                    logging.warning(f"Failed to clear tokens for {name}: {e}")
-
-        except MCPServer.DoesNotExist:
-            return RESULT_NOT_FOUND, None
-
-        if not server.enabled:
-            return RESULT_DISABLED, server
-
-        # Attempt to reconnect
-        try:
-            tools_objs = await self._connect_and_fetch_tools(server, session_id)
-            tools = patch_tools_schema(tools_objs)
-            tools_info = serialize_tools(tools)
-
-            # Update session-specific connection
-            await self._set_connection_status(
-                server.name, STATUS_CONNECTED, tools_info, session_id
-            )
-
-            server.tools = tools_info
-            server.connection_status = STATUS_CONNECTED
-
-            return RESULT_OK, server
-
-        except asyncio.TimeoutError:
-            return RESULT_TIMEOUT, server
-        except Exception as e:
-            logging.warning(f"Health check for {name} failed: {e}")
-            return RESULT_ERROR, server
-
     # ──────────────────────────────────────────────────────────────────────
     # Session-Isolated Tool Retrieval (No Global State Mutation)
     # ──────────────────────────────────────────────────────────────────────

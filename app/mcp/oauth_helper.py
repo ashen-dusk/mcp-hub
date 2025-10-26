@@ -109,7 +109,7 @@ async def build_authorization_url(
             redirect_uris=[AnyHttpUrl(redirect_uri)],
             grant_types=["authorization_code", "refresh_token"],
             response_types=["code"],
-            scope="*",
+            scope="",
         )
 
         # Create user-isolated storage
@@ -157,6 +157,8 @@ async def build_authorization_url(
                     timeout=10.0
                 )
 
+                logging.info(f"[OAuth Helper] Initial request returned status: {response.status_code}")
+
                 if response.status_code == 401:
                     # Step 2: Discover protected resource metadata
                     discovery_request = await oauth_provider._discover_protected_resource(response)
@@ -184,14 +186,61 @@ async def build_authorization_url(
                             registration_response = await client.send(registration_request)
                             await oauth_provider._handle_registration_response(registration_response)
                             logging.info(f"[OAuth Helper] ✅ Registered OAuth client")
+                else:
+                    # Server didn't return 401 - try alternative OAuth discovery
+                    logging.warning(f"[OAuth Helper] Server returned {response.status_code} instead of 401. Attempting alternative OAuth discovery...")
+
+                    # Try standard OAuth discovery URLs directly
+                    parsed = urlparse(server.url)
+                    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+                    discovery_urls = [
+                        urljoin(base_url, "/.well-known/oauth-authorization-server"),
+                        urljoin(base_url, "/.well-known/openid-configuration"),
+                    ]
+
+                    metadata_discovered = False
+                    for discovery_url in discovery_urls:
+                        try:
+                            logging.info(f"[OAuth Helper] Trying discovery URL: {discovery_url}")
+                            metadata_response = await client.get(discovery_url, timeout=10.0)
+
+                            if metadata_response.status_code == 200:
+                                metadata_request = oauth_provider._create_oauth_metadata_request(discovery_url)
+                                await oauth_provider._handle_oauth_metadata_response(metadata_response)
+                                metadata_discovered = True
+                                logging.info(f"[OAuth Helper] ✅ Discovered OAuth metadata from {discovery_url}")
+                                break
+                        except Exception as e:
+                            logging.debug(f"[OAuth Helper] Discovery failed for {discovery_url}: {e}")
+                            continue
+
+                    if not metadata_discovered:
+                        logging.error(f"[OAuth Helper] Failed to discover OAuth metadata from standard URLs")
+                        return None
+
+                    # Register client if needed
+                    if not oauth_provider.context.client_info:
+                        registration_request = await oauth_provider._register_client()
+                        if registration_request:
+                            registration_response = await client.send(registration_request)
+                            await oauth_provider._handle_registration_response(registration_response)
+                            logging.info(f"[OAuth Helper] ✅ Registered OAuth client")
 
         # Now build the authorization URL manually
         if not oauth_provider.context.client_info:
-            logging.error("[OAuth Helper] No client info available")
+            logging.error(f"[OAuth Helper] No client info available for {server.name}")
+            logging.error(f"[OAuth Helper] This may mean:")
+            logging.error(f"  1. The server doesn't properly implement OAuth discovery (RFC 9728)")
+            logging.error(f"  2. The server URL is incorrect or unreachable")
+            logging.error(f"  3. The server doesn't support dynamic client registration")
+            logging.error(f"[OAuth Helper] Server URL: {server.url}")
             return None
 
         if not oauth_provider.context.oauth_metadata:
-            logging.error("[OAuth Helper] No OAuth metadata available")
+            logging.error(f"[OAuth Helper] No OAuth metadata available for {server.name}")
+            logging.error(f"[OAuth Helper] The server may not have OAuth metadata at standard discovery endpoints")
+            logging.error(f"[OAuth Helper] Server URL: {server.url}")
             return None
 
         # Get authorization endpoint

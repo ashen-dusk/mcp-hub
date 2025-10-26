@@ -66,22 +66,12 @@ class ConnectionResult:
     message: str
     connection_status: str
     server: MCPServerType
+    requires_auth: bool = False
+    authorization_url: Optional[str] = None
+    state: Optional[str] = None
 
 @strawberry.type
 class DisconnectResult:
     success: bool
     message: str
     server: MCPServerType
-
-
-
-
-
-@strawberry.type
-class OAuthInitResult:
-    """Result of initiating OAuth flow for an MCP server."""
-    success: bool
-    message: str
-    authorization_url: Optional[str]
-    state: Optional[str]
-    server: Optional[MCPServerType]
