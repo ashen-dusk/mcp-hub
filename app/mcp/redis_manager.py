@@ -46,6 +46,17 @@ class MCPRedisManager:
         Returns:
             Configured Redis client instance
         """
+        # Connection pool settings to prevent "max number of clients reached"
+        # Redis Cloud Free Tier limit: ~30 connections
+        # Setting to 20 to leave headroom for other operations
+        connection_pool_kwargs = {
+            'decode_responses': True,
+            'max_connections': 20,  # Limit for Redis Cloud upto (30 total)
+            'socket_keepalive': True,  # Enable TCP keepalive
+            'socket_keepalive_options': {},  # Use default keepalive options
+            'health_check_interval': 30,  # Health check every 30 seconds
+        }
+
         # Handle Redis Cloud with SSL considerations
         if 'redis-cloud.com' in redis_url:
             try:
@@ -55,18 +66,18 @@ class MCPRedisManager:
                     host=parsed.hostname,
                     port=parsed.port,
                     password=parsed.password,
-                    decode_responses=True,
-                    ssl=False
+                    ssl=False,
+                    **connection_pool_kwargs
                 )
-                logging.info("Redis Cloud connection created (SSL disabled)")
+                logging.info("Redis Cloud connection created (SSL disabled) with connection pool")
                 return client
             except Exception as e:
                 logging.warning(f"Redis Cloud SSL connection failed: {e}, trying standard URL")
                 # Fallback to standard URL parsing
 
-        # Standard Redis connection
-        client = redis.from_url(redis_url, decode_responses=True)
-        logging.info("Redis connection created")
+        # Standard Redis connection with connection pool
+        client = redis.from_url(redis_url, **connection_pool_kwargs)
+        logging.info("Redis connection created with connection pool (max_connections=20)")
         return client
 
     def _build_key(self, session_id: str, *parts: str) -> str:
@@ -236,6 +247,17 @@ class MCPRedisManager:
         except Exception as e:
             logging.error(f"Redis health check failed: {e}")
             return False
+
+    async def close(self) -> None:
+        """
+        Close the Redis connection and clean up resources.
+        Should be called when shutting down the application.
+        """
+        try:
+            await self.redis_client.close()
+            logging.info("Redis connection closed")
+        except Exception as e:
+            logging.error(f"Error closing Redis connection: {e}")
 
     # ──────────────────────────────────────────────────────────────────────
     # OAuth Session Management
