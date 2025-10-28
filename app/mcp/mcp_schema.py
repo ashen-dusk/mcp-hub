@@ -19,6 +19,7 @@ from django.contrib.auth.models import AnonymousUser
 from app.mcp.types import (
     MCPServerType,
     MCPServerFilter,
+    MCPServerOrder,
     ConnectionResult,
     DisconnectResult,
     JSON
@@ -26,7 +27,9 @@ from app.mcp.types import (
 from app.mcp.utils import generate_anonymous_session_key
 from app.mcp.oauth_helper import initiate_oauth_flow
 from app.mcp.oauth_storage import ClientTokenStorage
-
+from app.mcp.types import MCPServerType, MCPServerFilter, MCPServerOrder
+from app.mcp.models import MCPServer
+from strawberry_django.relay import DjangoListConnection
 
 def _get_user_context(info: Info) -> str:
     """
@@ -54,36 +57,28 @@ def _get_user_context(info: Info) -> str:
 @strawberry.type
 # ── graphql: query ───────────────────────────────────────────────────────────
 class Query:
-    mcp_server_query: List[MCPServerType] = strawberry_django.field(filters=MCPServerFilter)
 
-    @strawberry.field
-    async def mcp_servers(self, info: Info) -> List[MCPServerType]:
-        """Get all public MCP servers with user/session-specific connection states."""
-        session_key = _get_user_context(info)
-        logging.debug(f"Fetching MCP servers for session: {session_key}")
-        servers = await mcp.alist_servers(session_id=session_key)
-        return servers
+    @strawberry_django.connection(DjangoListConnection[MCPServerType], filters=MCPServerFilter, order=MCPServerOrder)
+    def mcp_servers(self) -> List[MCPServer]:
+        """
+        Get all public MCP servers with user/session-specific connection states.
 
-    @strawberry.field(permission_classes=[IsAuthenticated])
-    async def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
-        """Get only the user's own MCP servers with connection status and tools."""
+        Supports Relay-style pagination (cursors), filtering, and ordering.
+        The decorator applies filters and order to the base queryset before pagination.
+        Connection status and tools are fetched from Redis at the field level.
+        Returns a connection with edges, pageInfo, and optional totalCount.
+        """
+        return MCPServer.objects.filter(is_public=True)
+
+    @strawberry_django.field(permission_classes=[IsAuthenticated])
+    def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
+        """
+        Get only the user's own MCP servers with connection status and tools.
+
+        Connection status and tools are fetched from Redis at the field level.
+        """
         user = info.context.request.user
-        session_key = _get_user_context(info)
-        logging.debug(f"Fetching user MCP servers for session: {session_key}")
-
-        servers = [s async for s in MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")]
-
-        # Get user/session-specific connection states from Redis
-        for server in servers:
-            try:
-                server.connection_status = await mcp._get_connection_status(server.name, session_key)
-                server.tools = await mcp._get_connection_tools(server.name, session_key)
-            except Exception as e:
-                logging.warning(f"Failed to get connection state for server {server.name}: {e}")
-                server.connection_status = "DISCONNECTED"
-                server.tools = []
-
-        return servers
+        return MCPServer.objects.filter(owner=user).select_related('owner').order_by("name")
 
 
 @strawberry.type
