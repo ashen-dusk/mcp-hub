@@ -14,6 +14,8 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from decouple import config
+from django.core.exceptions import ImproperlyConfigured
+import dj_database_url
 
 # Load environment variables from .env file
 load_dotenv()
@@ -90,6 +92,15 @@ DATABASES = {
     }
 }
 
+# If DATABASE_URL is set (e.g., for Neon/prod), override 'default'
+if os.environ.get('DATABASE_URL'):
+    DATABASES['default'] = dj_database_url.parse(
+        os.environ['DATABASE_URL'],  # e.g., postgresql://... from Neon
+        conn_max_age=600,  # Optional: Reuse connections
+        conn_health_checks=True,
+    )
+    # Ensure SSL for Neon
+    DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
