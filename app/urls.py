@@ -25,7 +25,7 @@ urlpatterns = [
     # GraphQL endpoint
     path(
         "graphql",
-        csrf_exempt(AsyncGraphQLView.as_view(schema=schema, graphiql=getattr(settings, "DEBUG", False))),
+        csrf_exempt(AsyncGraphQLView.as_view(schema=schema, graphql_ide="graphiql" if getattr(settings, "DEBUG", False) else None)),
         name="graphql",
     ),
 ]
