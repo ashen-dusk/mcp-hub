@@ -14,7 +14,7 @@ from django.contrib.auth.models import User
 from fastmcp.client import Client as FastMCPClient
 from fastmcp.client.auth.oauth import FileTokenStorage
 
-from .models import MCPServer
+from .models import MCPServer, Category
 from .redis_manager import mcp_redis
 from .oauth_storage import ClientTokenStorage, SimpleTokenAuth
 from .utils import patch_tools_schema, serialize_tools
@@ -140,6 +140,7 @@ class MCPServerManager:
         requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False,
         description: Optional[str] = None,
+        category_id: Optional[str] = None,
     ) -> MCPServer:
         """
         Create or update an MCP server configuration.
@@ -156,25 +157,36 @@ class MCPServerManager:
             requires_oauth2: Whether OAuth2 is required
             is_public: Whether server is publicly available
             description: Description of what this server does
+            category_id: Optional category ID to assign to this server
 
         Returns:
             Created or updated MCPServer instance
         """
+        defaults = {
+            "transport": transport,
+            "url": url,
+            "command": command,
+            "args": args or {},
+            "headers": headers or {},
+            "query_params": query_params or {},
+            "enabled": True,
+            "requires_oauth2": requires_oauth2,
+            "is_public": is_public,
+            "description": description,
+        }
+
+        # Add category if provided
+        if category_id is not None:
+            try:
+                category = await Category.objects.aget(pk=category_id)
+                defaults["category"] = category
+            except Category.DoesNotExist:
+                pass  # Ignore invalid category_id
+
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
             owner=owner,
-            defaults={
-                "transport": transport,
-                "url": url,
-                "command": command,
-                "args": args or {},
-                "headers": headers or {},
-                "query_params": query_params or {},
-                "enabled": True,
-                "requires_oauth2": requires_oauth2,
-                "is_public": is_public,
-                "description": description,
-            },
+            defaults=defaults,
         )
         await self.initialize_client()  # Refresh global client if needed
         return rec

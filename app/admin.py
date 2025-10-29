@@ -2,7 +2,16 @@ from django.contrib import admin
 from django import forms
 from django.db import models
 from django_svelte_jsoneditor.widgets import SvelteJSONEditorWidget
-from .models import MCPServer, Assistant, Tool
+from .models import MCPServer, Assistant, Tool, Category
+
+
+@admin.register(Category)
+class CategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "icon", "color", "created_at", "updated_at")
+    search_fields = ("name", "description")  # Required for autocomplete_fields
+    readonly_fields = ("created_at", "updated_at")
+    ordering = ("name",)
+    list_per_page = 25
 
 
 class MCPServerAdminForm(forms.ModelForm):
@@ -20,10 +29,11 @@ class MCPServerAdminForm(forms.ModelForm):
 @admin.register(MCPServer)
 class MCPServerAdmin(admin.ModelAdmin):
     form = MCPServerAdminForm
-    list_display = ("name", "transport", "enabled", "connection_status", "is_public", "updated_at")
-    search_fields = ("name", "transport")
-    list_filter = ("transport", "enabled", "connection_status", "is_public")
+    list_display = ("name", "category", "transport", "enabled", "owner", "is_public", "updated_at")
+    search_fields = ("name", "transport", "description")
+    list_filter = ("category", "transport", "enabled", "connection_status", "is_public")
     readonly_fields = ("id", "created_at", "updated_at")
+    autocomplete_fields = ("category",)
 
 
 @admin.register(Assistant)

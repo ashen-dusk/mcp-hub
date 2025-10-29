@@ -3,6 +3,34 @@ from django.contrib.auth.models import User
 import uuid
 import shortuuid
 
+# ── Category: model ──────────────────────────────────────────────────────────────
+class Category(models.Model):
+    """
+    Category model for organizing MCP servers.
+    Includes visual metadata like icon and color for UI representation.
+    """
+    id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
+    name = models.CharField(max_length=100, unique=True, help_text="Unique category name")
+    icon = models.TextField(blank=True, null=True, help_text="Icon identifier (URL, emoji, icon name, or icon class)")
+    color = models.CharField(max_length=20, blank=True, null=True, help_text="Color code for UI display (hex, rgb, or color name)")
+    description = models.TextField(blank=True, null=True, help_text="Description of this category")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "category"
+        ordering = ["name"]
+        verbose_name_plural = "Categories"
+
+    def __str__(self) -> str:
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            self.id = f"ctg_{shortuuid.uuid()}"
+        super().save(*args, **kwargs)
+
 # ── MCPServer: model ─────────────────────────────────────────────────────────────
 class MCPServer(models.Model):
     TRANSPORT_STDIO = "stdio"
@@ -27,6 +55,14 @@ class MCPServer(models.Model):
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True, help_text="Description of what this server does")
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='servers',
+        help_text="Category this server belongs to"
+    )
     transport = models.CharField(max_length=32, choices=TRANSPORT_CHOICES)
     url = models.TextField(blank=True, null=True)
     command = models.TextField(blank=True, null=True)

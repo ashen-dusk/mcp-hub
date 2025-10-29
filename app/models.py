@@ -1,8 +1,8 @@
 import shortuuid
 from django.db import models
-from .mcp.models import MCPServer
+from .mcp.models import MCPServer, Category
 
-__all__ = ["MCPServer", "Agent", "Tool"]
+__all__ = ["MCPServer", "Category", "Assistant", "Tool"]
 
 
 # ── Agent: model ─────────────────────────────────────────────────────────────
