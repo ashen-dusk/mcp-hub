@@ -8,16 +8,61 @@ Multi-tenant MCP (Model Context Protocol) server management with Redis-based ses
 
 This module allows your Django application to:
 1. **Manage multiple MCP servers** (GitHub, Slack, custom APIs, etc.)
-2. **Connect/disconnect** to servers per user session
-3. **Retrieve tools** from connected servers for LangChain agents
-4. **Isolate state** so different users don't see each other's connections
-5. **Handle OAuth** for servers that require authentication
+2. **Organize servers with categories** (Productivity, Development, Data & Analytics, etc.)
+3. **Connect/disconnect** to servers per user session
+4. **Retrieve tools** from connected servers for LangChain agents
+5. **Isolate state** so different users don't see each other's connections
+6. **Handle OAuth** for servers that require authentication
 
-**Real-world example:** User A connects to GitHub MCP server. User B shouldn't see User A's connection or access User A's GitHub tools. This module ensures complete isolation.
+**Real-world example:** User A connects to GitHub MCP server in the "Development" category. User B shouldn't see User A's connection or access User A's GitHub tools. This module ensures complete isolation.
 
 ---
 
 ## Core Components
+
+### 0. Models (`models.py`)
+
+**What it does:** Defines database models for MCP servers and categories.
+
+**Why it exists:** Structured data storage with relationships and constraints.
+
+**Key Models:**
+
+#### MCPServer Model
+- Custom ID with `mcp_` prefix (e.g., `mcp_abc123xyz`)
+- Supports multiple transports: stdio, SSE, WebSocket, streamable_http
+- User ownership (private servers) and public servers
+- Category relationship (optional, nullable)
+- OAuth2 support flag
+- Connection status tracking
+
+#### Category Model
+- Custom ID with `ctg_` prefix (e.g., `ctg_abc123xyz`) - Stripe-style professional naming
+- Visual metadata: `name`, `icon` (URL/emoji), `color` (hex/rgb), `description`
+- Related servers via `servers` reverse relation
+- Auto-generated timestamps
+- Unique names enforced at database level
+
+**Example:**
+```python
+category = Category.objects.create(
+    name="Productivity",
+    icon="🚀",
+    color="#4CAF50",
+    description="Productivity tools"
+)
+# ID auto-generated: ctg_k3j5h2n4
+
+server = MCPServer.objects.create(
+    name="GitHub MCP",
+    transport="stdio",
+    category=category,
+    owner=user
+)
+# ID auto-generated: mcp_abc123xyz
+```
+
+---
 
 ### 1. MCPServerManager (`manager.py`)
 
@@ -36,7 +81,14 @@ This module allows your Django application to:
 ##### Server Management Methods
 
 ```python
-await mcp.asave_server(name, transport, owner, url=..., requires_oauth2=...)
+await mcp.asave_server(
+    name,
+    transport,
+    owner,
+    url=...,
+    requires_oauth2=...,
+    category_id="ctg_abc123"
+)
 ```
 **Purpose:** Save or update an MCP server configuration in the database.
 
@@ -46,8 +98,9 @@ await mcp.asave_server(name, transport, owner, url=..., requires_oauth2=...)
 - Creates or updates MCPServer record in database
 - Stores configuration (URL, transport type, OAuth requirements)
 - Associates server with owner (user)
+- Assigns category if `category_id` is provided (optional)
 
-**Example use case:** Admin wants to add a Slack MCP server for all users.
+**Example use case:** Admin wants to add a GitHub MCP server in the "Development" category for all users.
 
 ---
 
@@ -523,7 +576,100 @@ oauth = ClientOAuth(mcp_url, user_id, session_id, client_name, callback_port, sc
 
 ---
 
-### 6. Constants (`constants.py`)
+### 6. Category Schema (`category_schema.py`)
+
+**What it does:** GraphQL queries and mutations for category management.
+
+**Why it exists:** Separate schema for category operations keeps code organized.
+
+**Purpose:** Provide CRUD operations for categories via GraphQL API.
+
+#### Key Operations
+
+**Queries:**
+
+```graphql
+# Get all categories
+query {
+  categories {
+    edges {
+      node {
+        id
+        name
+        icon
+        color
+        description
+      }
+    }
+  }
+}
+
+# Get categories with their servers
+query {
+  categories {
+    edges {
+      node {
+        name
+        servers {
+          id
+          name
+        }
+      }
+    }
+  }
+}
+
+# Get single category
+query {
+  category(id: "ctg_abc123") {
+    name
+    icon
+    servers {
+      name
+    }
+  }
+}
+```
+
+**Mutations:**
+
+```graphql
+# Create category
+mutation {
+  createCategory(
+    name: "Productivity"
+    icon: "🚀"
+    color: "#4CAF50"
+    description: "Productivity tools"
+  ) {
+    id
+    name
+  }
+}
+
+# Update category
+mutation {
+  updateCategory(
+    id: "ctg_abc123"
+    color: "#FF5722"
+  ) {
+    id
+    name
+    color
+  }
+}
+
+# Delete category
+mutation {
+  deleteCategory(id: "ctg_abc123")
+}
+```
+
+**Why separate schema?** Keeps MCP server logic separate from category management. Clean separation of concerns.
+
+---
+
+### 7. Constants (`constants.py`)
 
 **What it does:** Centralizes all configuration values.
 
@@ -637,7 +783,18 @@ oauth = ClientOAuth(mcp_url, user_id, session_id, client_name, callback_port, sc
 
 ## Common Operations
 
-### Add a New MCP Server
+### Create a Category
+```python
+category = await Category.objects.acreate(
+    name="Communication",
+    icon="💬",
+    color="#9C27B0",
+    description="Chat and collaboration tools"
+)
+# Returns: Category with id="ctg_abc123xyz"
+```
+
+### Add a New MCP Server (with Category)
 ```python
 await mcp.asave_server(
     name="slack",
@@ -645,7 +802,8 @@ await mcp.asave_server(
     owner=user,
     url="https://slack.com/api/mcp",
     requires_oauth2=True,
-    is_public=True
+    is_public=True,
+    category_id="ctg_abc123xyz"  # Optional category assignment
 )
 ```
 
@@ -690,10 +848,12 @@ await mcp_redis.clear_session_data(session_id=user.username)
 
 This module provides:
 - ✅ **Multi-tenant MCP server management**
+- ✅ **Category-based organization** with visual metadata (icons, colors)
 - ✅ **Session-isolated connection state**
 - ✅ **Redis-backed fast lookups**
 - ✅ **OAuth support with user isolation**
 - ✅ **LangChain integration via adapters**
+- ✅ **Professional ID patterns** (`mcp_*`, `ctg_*`)
 - ✅ **Clean separation of concerns**
 
-Each component has a specific job, and they work together to provide secure, efficient MCP server management for LangGraph agents.
+Each component has a specific job, and they work together to provide secure, efficient MCP server management with organized categorization for LangGraph agents.
