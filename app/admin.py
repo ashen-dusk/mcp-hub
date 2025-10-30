@@ -2,7 +2,7 @@ from django.contrib import admin
 from django import forms
 from django.db import models
 from django_svelte_jsoneditor.widgets import SvelteJSONEditorWidget
-from .models import MCPServer, Assistant, Tool, Category
+from .models import MCPServer, Assistant, Category
 
 
 @admin.register(Category)
@@ -41,17 +41,8 @@ class AssistantAdmin(admin.ModelAdmin):
     formfield_overrides = {
         models.JSONField: {"widget": SvelteJSONEditorWidget},
     }
-    list_display = ("id", "name", "type", "is_active", "created_at")
-    search_fields = ("name", "type")
-    list_filter = ("type", "is_active")
+    list_display = ("id", "name", "user", "created_at", "updated_at")
+    search_fields = ("name", "user__username", "user__email")
+    list_filter = ("created_at", "updated_at")
     readonly_fields = ("id", "created_at", "updated_at")
-
-@admin.register(Tool)
-class ToolAdmin(admin.ModelAdmin):
-    formfield_overrides = {
-        models.JSONField: {"widget": SvelteJSONEditorWidget},
-    }
-    list_display = ("id", "name", "assistant", "category", "is_active", "updated_at")
-    search_fields = ("name", "category")
-    list_filter = ("category", "is_active", "assistant")
-    readonly_fields = ("id", "created_at", "updated_at")
+    autocomplete_fields = ("user",)

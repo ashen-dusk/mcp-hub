@@ -1,71 +1,52 @@
 import shortuuid
 from django.db import models
+from django.contrib.auth.models import User
 from .mcp.models import MCPServer, Category
 
-__all__ = ["MCPServer", "Category", "Assistant", "Tool"]
+__all__ = ["MCPServer", "Category", "Assistant"]
 
 
-# ── Agent: model ─────────────────────────────────────────────────────────────
+# ── Assistant: model ─────────────────────────────────────────────────────────────
 class Assistant(models.Model):
     """
-    Represents a registered AI agent (like ResearchAgent, SupportAgent, etc.)
+    Represents a user's personalized AI assistant with custom instructions.
+    Similar to ChatGPT/Claude custom instructions - users can customize their assistant's behavior.
     """
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
-    name = models.CharField(max_length=100, unique=True)   # e.g., "Research Agent"
-    type = models.CharField(max_length=50)                 # e.g., "research", "support"
-    description = models.TextField(blank=True, null=True)  # human-readable desc
-    is_active = models.BooleanField(default=True)
-
-    # optional agent-specific config (API keys, model params, prompts, etc.)
+    user = models.ForeignKey(
+        User,
+        related_name="assistants",
+        on_delete=models.CASCADE,
+        null=True,  # Temporarily nullable for migration
+        blank=True,
+        help_text="The user who owns this assistant"
+    )
+    name = models.CharField(max_length=100, default="My Assistant")  # Display name, user can change anytime
+    description = models.TextField(blank=True, null=True)  # Optional description
+    instructions = models.TextField(
+        blank=True,
+        default="",
+        help_text="Custom instructions to control the assistant's behavior, tone, and responses"
+    )
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Whether this assistant is currently active. Only one assistant can be active per user."
+    )
+    # optional assistant-specific config (model preferences, etc.)
     config = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.name} ({self.type})"
+        return f"{self.name} (by {self.user.username})"
 
     def save(self, *args, **kwargs):
         if not self.id:
             self.id = f"assistant_{shortuuid.uuid()[:8]}"
-        super().save(*args, **kwargs)
 
-# ── Tool: model ─────────────────────────────────────────────────────────────
-class Tool(models.Model):
-    id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
-    assistant = models.ForeignKey(
-        Assistant,
-        related_name="tools",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        help_text="The agent this tool belongs to (required for active tools)"
-    )
-    name = models.CharField(max_length=100)
-    description = models.TextField(blank=True, null=True)
-    category = models.CharField(max_length=50)
-    config = models.JSONField(default=dict, blank=True)
-    is_active = models.BooleanField(default=True)
+        # Ensure only one assistant is active per user
+        if self.is_active and self.user:
+            # Deactivate all other assistants for this user
+            Assistant.objects.filter(user=self.user, is_active=True).exclude(id=self.id).update(is_active=False)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["assistant", "name"], 
-                name="unique_tool_per_assistant"
-            ),
-            models.CheckConstraint(
-               check=~(models.Q(is_active=True) & models.Q(assistant__isnull=True)),
-               name="active_tool_requires_assistant"
-            ),
-        ]
-
-    def __str__(self):
-        assistant_name = self.assistant.name if self.assistant else "Unassigned"
-        return f"{self.name} ({self.category}) for {assistant_name}"
-
-    def save(self, *args, **kwargs):
-        if not self.id:
-            self.id = f"tool_{shortuuid.uuid()[:8]}"
         super().save(*args, **kwargs)

@@ -50,6 +50,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
     # sessionId = config["configurable"].get("copilotkit_auth")
     sessionId = state.get("sessionId", None)
+    assistant = state.get("assistant", None)
     print('chat_node: sessionId in chat_node', sessionId)
     print(state, 'state in chat_node')
     tools = await get_tools(sessionId=sessionId)
@@ -58,16 +59,30 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
 
     llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
-        
+
         # Get IST time (UTC+5:30)
     ist_timezone = timezone(timedelta(hours=5, minutes=30))
     ist_now = datetime.now(ist_timezone)
 
-    system_message = f"""
+    # Build system message with optional assistant instructions
+    base_system_message = f"""
      Today's date: {ist_now.strftime("%Y-%m-%d")}
      Current time (IST): {ist_now.strftime("%H:%M:%S")}
         You are a helpful assistant named MCP Assistant that can answer questions and perform tasks using the MCP servers.
         """
+
+    # Add assistant-specific instructions if an assistant is selected
+    if assistant and assistant.get("instructions"):
+        system_message = f"""{base_system_message}
+
+# Custom Assistant Instructions
+{assistant.get("instructions")}
+
+Follow the custom instructions above while helping the user.
+"""
+    else:
+        system_message = base_system_message
+
     response = await llm_with_tools.ainvoke(
         [
             SystemMessage(content=system_message),

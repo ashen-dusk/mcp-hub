@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from langgraph.graph import MessagesState
 
 class AgentState(MessagesState):
@@ -8,3 +8,4 @@ class AgentState(MessagesState):
     status: Optional[str] = None
     sessionId: Optional[str] = None
     tool_calls: Optional[Any] = None
+    assistant: Optional[Dict[str, Any]] = None
