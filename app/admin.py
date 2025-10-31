@@ -7,7 +7,7 @@ from .models import MCPServer, Assistant, Category
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ("name", "icon", "color", "created_at", "updated_at")
+    list_display = ("name", "icon", "slug", "color", "created_at", "updated_at")
     search_fields = ("name", "description")  # Required for autocomplete_fields
     readonly_fields = ("created_at", "updated_at")
     ordering = ("name",)

@@ -31,6 +31,7 @@ class CategoryType(Node):
     icon: Optional[str]
     color: Optional[str]
     description: Optional[str]
+    slug: str 
     created_at: datetime
     updated_at: datetime
 
