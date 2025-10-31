@@ -90,20 +90,12 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     else:
         system_message = base_system_message
 
-    # === Prepare invocation config with max_tokens if available ===
-    invocation_config = {}
-    if max_tokens is not None:
-        invocation_config["max_tokens"] = max_tokens
-
-    # Merge with original config (preserve callbacks, etc.)
-    final_config = {**config, **invocation_config}
-
     response = await llm_with_tools.ainvoke(
         [
             SystemMessage(content=system_message),
             *state["messages"]
         ],
-        config=final_config,
+        config=config,
     )
     print(response, "response in chat_node")
     return {
