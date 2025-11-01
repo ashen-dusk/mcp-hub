@@ -16,6 +16,12 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
     tools = await get_tools(sessionId=sessionId)
     messages = state.get("messages", [])
 
+    # Get current tool call info
+    ai_message = cast(AIMessage, messages[-1]) if messages and isinstance(messages[-1], AIMessage) else None
+    tool_call = ai_message.tool_calls[0] if ai_message and ai_message.tool_calls else {}
+    tool_name = tool_call.get("name", "unknown tool")
+    tool_args = tool_call.get("args", {})
+
     # Check if we have an approval response from the interrupt
     approval_response = state.get("approval_response")
     if approval_response:
@@ -28,9 +34,6 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
 
         # Check if user cancelled
         if not approval_response.get("approved", False) or approval_response.get("action") == "CANCEL":
-            ai_message = cast(AIMessage, messages[-1])
-            tool_call = ai_message.tool_calls[0] if ai_message.tool_calls else {}
-            tool_name = tool_call.get("name", "unknown tool")
             tool_call_id = tool_call.get("id", "")
 
             # Must send ToolMessage to satisfy OpenAI's requirement
@@ -42,14 +45,32 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
             return {
                 **state,
                 "messages": [*messages, cancel_msg],
-                "approval_response": None  # Clear the approval response
+                "approval_response": None,
+                "current_tool_call": None  # Clear tool call state
             }
 
         # User approved - continue with tool execution
-        state["approval_response"] = None  # Clear the approval response
+        state["approval_response"] = None
+
+    # Update state to show tool is executing
+    state["current_tool_call"] = {
+        "name": tool_name,
+        "args": tool_args,
+        "status": "executing"
+    }
 
     tool_node = ToolNode(tools)
-    return await tool_node.ainvoke(state, config)
+    result = await tool_node.ainvoke(state, config)
+
+    # Update state to show tool execution complete
+    result["current_tool_call"] = {
+        "name": tool_name,
+        "args": tool_args,
+        "status": "complete",
+        "result": result.get("messages", [])[-1].content if result.get("messages") else None
+    }
+
+    return result
 
 
 async def interrupt_node(state: AgentState, config: RunnableConfig):
@@ -65,6 +86,13 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
 
         if tool_calls:
             tool_call = tool_calls[0]
+
+            # Set current tool call state for frontend rendering
+            state["current_tool_call"] = {
+                "name": tool_call.get("name"),
+                "args": tool_call.get("args"),
+                "status": "awaiting_approval"
+            }
 
             # Use interrupt() to pause and send data to client
             # The client can resume with approval/denial
@@ -115,7 +143,7 @@ graph_builder.add_node("interrupt_node", interrupt_node)
 graph_builder.add_edge(START, "chat_node")
 graph_builder.add_edge("interrupt_node", "tools")
 graph_builder.add_edge("tools", "chat_node")
-
+# conditional edges
 graph_builder.add_conditional_edges(
     "chat_node",
     route,
@@ -124,5 +152,4 @@ graph_builder.add_conditional_edges(
 
 graph = graph_builder.compile(
     checkpointer=MemorySaver(),
-    # interrupt_after=['interrupt_node']  # No longer needed - using interrupt() function instead
 )

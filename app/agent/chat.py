@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
@@ -52,8 +52,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     assistant = state.get("assistant", None)
     print('chat_node: sessionId in chat_node', sessionId)
     print(state, 'state in chat_node')
-    tools = await get_tools(sessionId=sessionId)
 
+    # Clear previous tool call state when processing a new user message
+    # (not when returning from tool execution)
+    messages = state.get("messages", [])
+    if messages and isinstance(messages[-1], HumanMessage):
+        state["current_tool_call"] = None
+
+    tools = await get_tools(sessionId=sessionId)
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
     temperature = assistant_config.get("temperature", 0)  # default 0

@@ -11,3 +11,4 @@ class AgentState(CopilotKitState):
     tool_calls: Optional[Any] = None
     assistant: Optional[Dict[str, Any]] = None
     approval_response: Optional[Dict[str, Any]] = None
+    current_tool_call: Optional[Dict[str, Any]] = None
