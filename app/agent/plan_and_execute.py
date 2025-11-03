@@ -22,7 +22,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.agent.types import AgentState, Plan, PlanStep
 from app.agent.model import get_llm
 from app.agent.chat import get_tools
-from copilotkit.langgraph import copilotkit_customize_config, copilotkit_emit_state
+from langgraph.prebuilt import ToolNode
+
+# from copilotkit.langgraph import copilotkit_customize_config, copilotkit_emit_state
 
 logger = logging.getLogger(__name__)
 
@@ -131,16 +133,9 @@ async def plan_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]
 
     # Get available tools
     tools = await get_tools(sessionId=sessionId)
-    tool_descriptions = "\n".join([
-        f"- {tool.name}: {getattr(tool, 'description', 'No description')}"
-        for tool in tools
-    ])
 
-    # Planning prompt
-    system_prompt = f"""You are a task planner. Break down the user's request into clear, sequential steps.
-
-Available Tools:
-{tool_descriptions}
+    # Planning prompt (tools will be bound to LLM, no need to list them)
+    system_prompt = """You are a task planner. Break down the user's request into clear, sequential steps.
 
 Create a plan with 3-7 steps. Each step should be:
 - Clear and specific
@@ -148,20 +143,24 @@ Create a plan with 3-7 steps. Each step should be:
 - Ordered logically
 
 Return ONLY a JSON object with this format:
-{{
+{
     "steps": [
         "Step 1 description",
         "Step 2 description",
         "Step 3 description"
     ]
-}}"""
+}"""
 
     llm = get_llm(state)
 
+    # Bind tools so LLM is aware of capabilities without explicitly listing them
+    # This saves tokens while providing context about what's possible
+    llm_with_tools = llm.bind_tools(tools)
+
     try:
-        # Try structured output
-        if hasattr(llm, 'with_structured_output'):
-            structured_llm = llm.with_structured_output(PlannerOutput)
+        # Try structured output with tool-aware LLM
+        if hasattr(llm_with_tools, 'with_structured_output'):
+            structured_llm = llm_with_tools.with_structured_output(PlannerOutput)
             response = await structured_llm.ainvoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Create a plan for: {user_query}")
@@ -169,7 +168,7 @@ Return ONLY a JSON object with this format:
             step_descriptions = response.steps
         else:
             # Fallback: parse JSON
-            response = await llm.ainvoke([
+            response = await llm_with_tools.ainvoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Create a plan for: {user_query}")
             ])
@@ -283,18 +282,18 @@ async def execute_step_node(state: AgentState, config: RunnableConfig) -> Dict[s
     current_step.status = "in_progress"
 
     # Emit updated state
-    config = copilotkit_customize_config(
-        config,
-        emit_intermediate_state=[{
-            "state_key": "plan_state",
-            "tool": "__plan_state__"
-        }]
-    )
+    # config = copilotkit_customize_config(
+    #     config,
+    #     emit_intermediate_state=[{
+    #         "state_key": "plan_state",
+    #         "tool": "__plan_state__"
+    #     }]
+    # )
 
-    updated_state = {
-        **state,
-        "plan_state": get_plan_state_for_frontend(state)
-    }
+    # updated_state = {
+    #     **state,
+    #     "plan_state": get_plan_state_for_frontend(state)
+    # }
     # await copilotkit_emit_state(config, updated_state)
 
     # Get tools
@@ -312,10 +311,13 @@ Expected Outcome: {current_step.expected_outcome}
 Focus ONLY on this specific step. Use tools if needed. Be thorough but concise."""
 
     try:
-        response = await llm_with_tools.ainvoke([
+        # Include full message history so LLM can see previous tool results
+        conversation = [
             SystemMessage(content=system_prompt),
+            *messages,  # Include all previous messages (including ToolMessages)
             HumanMessage(content=f"Execute: {current_step.description}")
-        ], config=config)
+        ]
+        response = await llm_with_tools.ainvoke(conversation, config=config)
 
         # Check for tool calls
         tool_calls = getattr(response, "tool_calls", [])
@@ -383,9 +385,10 @@ Focus ONLY on this specific step. Use tools if needed. Be thorough but concise."
 async def tool_execution_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     """
     Executes tools called by the executor.
-    """
-    from langgraph.prebuilt import ToolNode
 
+    Tool results are added to messages so the LLM can interpret them
+    in the next execution or replan step.
+    """
     logger.info("=== Executing Tools ===")
 
     sessionId = state.get("sessionId")
@@ -394,23 +397,14 @@ async def tool_execution_node(state: AgentState, config: RunnableConfig) -> Dict
     tool_node = ToolNode(tools)
     result = await tool_node.ainvoke(state, config)
 
-    # Get current step and mark as completed
+    # Mark current step as completed and move to next
+    # The replanner will analyze tool results and adjust if needed
     plan = state.get("plan")
     current_step_index = state.get("current_step_index", 0)
 
     if plan and current_step_index < len(plan.steps):
         current_step = plan.steps[current_step_index]
         current_step.status = "completed"
-        current_step.result = "Tools executed successfully"
-
-        # Emit updated state
-        config = copilotkit_customize_config(
-            config,
-            emit_intermediate_state=[{
-                "state_key": "plan_state",
-                "tool": "__plan_state__"
-            }]
-        )
 
         next_index = current_step_index + 1
 
@@ -426,8 +420,6 @@ async def tool_execution_node(state: AgentState, config: RunnableConfig) -> Dict
             "needs_tools": False
         }
 
-        # await copilotkit_emit_state(config, new_state)
-
         return new_state
 
     return {
@@ -440,56 +432,179 @@ async def tool_execution_node(state: AgentState, config: RunnableConfig) -> Dict
 # Replan Node (Optional)
 # ============================================================================
 
+class ReplanOutput(BaseModel):
+    """Structured output from the replanner."""
+    analysis: str = Field(description="Analysis of progress so far")
+    should_modify_plan: bool = Field(description="Whether the plan needs modification")
+    remaining_steps: List[str] = Field(description="Updated list of remaining step descriptions")
+
+
 async def replan_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     """
-    Optionally replans if steps failed or new approach needed.
+    Dynamically replans based on execution results (Tutorial Pattern).
 
-    Simplified: Only replans if critical failure occurred.
+    After each step, analyzes:
+    - What was accomplished
+    - Whether objective is already met
+    - What remaining steps are actually needed
+    - Whether to add/remove/modify steps
     """
     logger.info("=== Replanning ===")
 
     plan = state.get("plan")
+    current_step_index = state.get("current_step_index", 0)
+    messages = state.get("messages", [])
+    sessionId = state.get("sessionId")
+
     if not plan:
+        logger.info("No plan found, skipping replan")
         return state
 
-    failed_steps = [step for step in plan.steps if step.status == "failed"]
-
-    if not failed_steps:
+    # Check if all steps are complete
+    if current_step_index >= len(plan.steps):
+        logger.info("All steps complete, no replanning needed")
         return state
 
-    # Simple replan: add a recovery step
-    recovery_step = PlanStep(
-        step_number=len(plan.steps) + 1,
-        description=f"Recover from failed step: {failed_steps[0].description}",
-        dependencies=[],
-        expected_outcome="Successfully recover and complete task",
-        status="pending"
-    )
+    # Get completed steps
+    completed_steps = [step for step in plan.steps[:current_step_index] if step.status == "completed"]
+    failed_steps = [step for step in plan.steps[:current_step_index] if step.status == "failed"]
+    remaining_steps = plan.steps[current_step_index:]
 
-    plan.steps.append(recovery_step)
-    plan.updated_at = datetime.now().isoformat()
+    logger.info(f"📊 Progress: {len(completed_steps)} completed, {len(failed_steps)} failed, {len(remaining_steps)} remaining")
 
-    return {
-        **state,
-        "plan": plan,
-        "plan_state": get_plan_state_for_frontend(state)
-    }
+    # Build context for replanner
+    progress_summary = "\n".join([
+        f"✓ Step {step.step_number}: {step.description} - {step.result or 'Completed'}"
+        for step in completed_steps
+    ])
+
+    if failed_steps:
+        progress_summary += "\n" + "\n".join([
+            f"✗ Step {step.step_number}: {step.description} - Failed: {step.error}"
+            for step in failed_steps
+        ])
+
+    remaining_summary = "\n".join([
+        f"- Step {step.step_number}: {step.description}"
+        for step in remaining_steps
+    ])
+
+    # Get available tools
+    tools = await get_tools(sessionId=sessionId)
+
+    # Replan prompt (tools will be bound to LLM)
+    system_prompt = f"""You are a task replanner. Analyze the progress and decide if the remaining plan needs adjustment.
+
+Original Objective: {plan.objective}
+
+Progress So Far:
+{progress_summary}
+
+Remaining Planned Steps:
+{remaining_summary}
+
+Based on what's been accomplished, determine:
+1. Is the objective already met? (can we skip remaining steps?)
+2. Do remaining steps still make sense?
+3. Should we add new steps based on results?
+4. Should we modify/remove steps that are no longer needed?
+
+Return a JSON object:
+{{
+    "analysis": "Brief analysis of progress and what's needed",
+    "should_modify_plan": true/false,
+    "remaining_steps": ["updated step 1", "updated step 2", ...]
+}}
+
+If objective is met or no changes needed, return empty remaining_steps: []"""
+
+    llm = get_llm(state)
+
+    # Bind tools so LLM is aware of capabilities without explicitly listing them
+    llm_with_tools = llm.bind_tools(tools)
+
+    try:
+        # Include full message history so LLM can see tool results and previous interactions
+        conversation = [
+            SystemMessage(content=system_prompt),
+            *messages,  # Include all messages (including ToolMessages with results)
+            HumanMessage(content=f"Analyze progress and update the plan if needed.")
+        ]
+
+        # Try structured output with tool-aware LLM
+        if hasattr(llm_with_tools, 'with_structured_output'):
+            structured_llm = llm_with_tools.with_structured_output(ReplanOutput)
+            response = await structured_llm.ainvoke(conversation)
+            analysis = response.analysis
+            should_modify = response.should_modify_plan
+            updated_steps = response.remaining_steps
+        else:
+            # Fallback: parse JSON
+            response = await llm_with_tools.ainvoke(conversation)
+            import json
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                parsed = json.loads(response_text[json_start:json_end])
+                analysis = parsed.get("analysis", "")
+                should_modify = parsed.get("should_modify_plan", False)
+                updated_steps = parsed.get("remaining_steps", [])
+            else:
+                raise ValueError("No JSON found in response")
+
+        logger.info(f"🔄 Replan Analysis: {analysis}")
+        logger.info(f"📝 Should modify: {should_modify}, Updated steps: {len(updated_steps)}")
+
+        if should_modify and updated_steps:
+            # Create new plan steps
+            new_steps = [
+                PlanStep(
+                    step_number=current_step_index + i + 1,
+                    description=desc,
+                    dependencies=[],
+                    expected_outcome=f"Complete step {current_step_index + i + 1}",
+                    status="pending"
+                )
+                for i, desc in enumerate(updated_steps)
+            ]
+
+            # Update plan: keep completed steps + new remaining steps
+            plan.steps = plan.steps[:current_step_index] + new_steps
+            plan.updated_at = datetime.now().isoformat()
+
+            logger.info(f"✨ Plan updated: {len(new_steps)} remaining steps")
+
+        elif not updated_steps:
+            # Objective met, clear remaining steps
+            plan.steps = plan.steps[:current_step_index]
+            plan.updated_at = datetime.now().isoformat()
+            logger.info("🎯 Objective met! No remaining steps needed")
+
+        return {
+            **state,
+            "plan": plan,
+            "plan_state": get_plan_state_for_frontend(state)
+        }
+
+    except Exception as e:
+        logger.error(f"Replanning error: {e}", exc_info=True)
+        # Fallback: keep plan as-is
+        return state
 
 
 # ============================================================================
 # Routing
 # ============================================================================
 
-def should_continue(state: AgentState) -> Literal["execute_step", "tools", "replan", "end"]:
+def should_continue(state: AgentState) -> Literal["tools", "replan", "end"]:
     """
-    Route after execution:
-    - Continue to next step
+    Route after execution (Tutorial Pattern):
     - Execute tools if needed
-    - Replan if failure
-    - End if all complete
+    - Always replan after step execution (adaptive planning)
+    - End if no plan exists
     """
     plan = state.get("plan")
-    current_step_index = state.get("current_step_index", 0)
     needs_tools = state.get("needs_tools", False)
 
     if needs_tools:
@@ -498,24 +613,37 @@ def should_continue(state: AgentState) -> Literal["execute_step", "tools", "repl
     if not plan:
         return "end"
 
-    # Check if more steps remain
-    if current_step_index < len(plan.steps):
-        return "execute_step"
+    # ALWAYS replan after each step execution
+    # This enables dynamic plan adjustment based on results
+    return "replan"
 
-    # Check for failures that need replanning
-    failed_steps = [step for step in plan.steps if step.status == "failed"]
-    if failed_steps:
+
+def route_after_tools(state: AgentState) -> Literal["replan", "end"]:
+    """Route after tool execution - go to replan for adaptive planning."""
+    plan = state.get("plan")
+
+    if plan:
         return "replan"
 
     return "end"
 
 
-def route_after_tools(state: AgentState) -> Literal["execute_step", "end"]:
-    """Route after tool execution."""
+def replan_route(state: AgentState) -> Literal["execute_step", "end"]:
+    """
+    Route after replanning.
+
+    Decides whether to:
+    - Continue executing remaining steps
+    - End if objective is met or no steps remain
+    """
     plan = state.get("plan")
     current_step_index = state.get("current_step_index", 0)
 
-    if plan and current_step_index < len(plan.steps):
+    if not plan:
+        return "end"
+
+    # Check if there are more steps to execute
+    if current_step_index < len(plan.steps):
         return "execute_step"
 
     return "end"
@@ -527,10 +655,19 @@ def route_after_tools(state: AgentState) -> Literal["execute_step", "end"]:
 
 def create_plan_graph():
     """
-    Create simplified plan-and-execute graph.
+    Create adaptive plan-and-execute graph (Tutorial Pattern).
 
     Flow:
-    START -> plan -> execute_step -> [tools?] -> execute_step -> ... -> END
+    START -> plan -> execute_step -> replan -> execute_step -> replan -> ... -> END
+                          ↓
+                        tools
+                          ↓
+                       replan
+
+    After each step execution, the plan is dynamically adjusted based on:
+    - What was accomplished
+    - Whether the objective is already met
+    - What remaining steps are actually needed
     """
     workflow = StateGraph(AgentState)
 
@@ -543,38 +680,44 @@ def create_plan_graph():
     # Set entry point
     workflow.add_edge(START, "plan")
 
-    # Plan -> Execute
+    # Plan -> Execute first step
     workflow.add_edge("plan", "execute_step")
 
-    # Execute -> Route
+    # Execute -> Route (tools needed? -> replan -> end)
     workflow.add_conditional_edges(
         "execute_step",
         should_continue,
         {
-            "execute_step": "execute_step",
             "tools": "tools",
             "replan": "replan",
             "end": END
         }
     )
 
-    # Tools -> Route
+    # Tools -> Always replan (adaptive planning)
     workflow.add_conditional_edges(
         "tools",
         route_after_tools,
+        {
+            "replan": "replan",
+            "end": END
+        }
+    )
+
+    # Replan -> Route (continue? -> execute_step : end)
+    workflow.add_conditional_edges(
+        "replan",
+        replan_route,
         {
             "execute_step": "execute_step",
             "end": END
         }
     )
 
-    # Replan -> Execute
-    workflow.add_edge("replan", "execute_step")
-
     return workflow.compile(checkpointer=MemorySaver())
 
 
 # Create graph instance
-simplified_plan_graph = create_plan_graph()
+plan_and_execute_graph = create_plan_graph()
 
 logger.info("Simplified plan-and-execute graph created")
