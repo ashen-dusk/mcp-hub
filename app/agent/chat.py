@@ -62,15 +62,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     tools = await get_tools(sessionId=sessionId)
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
-    temperature = assistant_config.get("temperature", 0)  # default 0
-    max_tokens = assistant_config.get("max_tokens")  # can be None
     datetime_context = assistant_config.get("datetime_context", False)
 
-    # === Bind LLM with dynamic temperature ===
+    # === Bind LLM with tools (temperature and max_tokens are extracted inside get_llm) ===
     llm = get_llm(state)
-    llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False).with_config(
-        {"temperature": temperature}
-    )
+    llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False)
 
     # === Build system message with conditional datetime ===
     base_system_message = "You are a helpful assistant named MCP Assistant that can answer questions and perform tasks using the MCP servers."
