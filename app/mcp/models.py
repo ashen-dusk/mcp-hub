@@ -34,13 +34,7 @@ class Category(models.Model):
 
         # ✅ Added slug generation (new functionality)
         if not self.slug:
-            base_slug = slugify(self.name)
-            slug = base_slug
-            counter = 1
-            while Category.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            self.slug = slug
+            self.slug = slugify(self.name)
 
         super().save(*args, **kwargs)
 
