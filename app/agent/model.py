@@ -30,7 +30,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
             model=model_name,
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",
-            temperature=0,
+            # temperature=0,
             streaming=True,
             default_headers={
                 "HTTP-Referer": os.environ.get("NEXT_PUBLIC_APP_URL", "http://localhost:3000"),
@@ -49,7 +49,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
         return ChatDeepSeek(
             model=model_name,
             api_key=api_key,
-            temperature=0,
+            # temperature=0,
             streaming=True,
         )
 
@@ -64,6 +64,6 @@ def get_llm(state: AgentState) -> BaseChatModel:
     return ChatOpenAI(
         model=model_name,
         api_key=api_key,
-        temperature=0,
+        # temperature=0,
         streaming=True,
     )
