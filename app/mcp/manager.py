@@ -1,137 +1,131 @@
-import json
+"""
+MCP Server Manager - Core business logic for MCP server operations.
+
+Handles server lifecycle, connection management, tool retrieval,
+and session-isolated server interactions.
+"""
+
 import asyncio
 import logging
-import ast
 from typing import Dict, List, Optional, Any, Tuple
+
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from django.contrib.auth.models import User
-from .models import MCPServer
-from .redis_manager import mcp_redis
-from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
-from django.utils import timezone
-from pydantic.v1 import BaseModel
+from fastmcp.client import Client as FastMCPClient
 from fastmcp.client.auth.oauth import FileTokenStorage
 
-# OAuth2Error removed since we're using FastMCP's built-in OAuth
+from .models import MCPServer, Category
+from .redis_manager import mcp_redis
+from .oauth_storage import ClientTokenStorage, SimpleTokenAuth
+from .utils import patch_tools_schema, serialize_tools
+from .adapter_builder import MCPAdapterBuilder
+from .constants import (
+    MCP_CLIENT_TIMEOUT,
+    TOOL_FETCH_TIMEOUT,
+    STATUS_CONNECTED,
+    STATUS_DISCONNECTED,
+    STATUS_FAILED,
+    RESULT_OK,
+    RESULT_ERROR,
+    RESULT_TIMEOUT,
+    RESULT_NOT_FOUND,
+    RESULT_DISABLED,
+    OAUTH_CLIENT_NAME,
+    OAUTH_CALLBACK_PORT,
+    OAUTH_DEFAULT_SCOPES,
+)
 
-from fastmcp.client import Client as FastMCPClient  # type: ignore
-from fastmcp.client.auth import OAuth  # type: ignore
-from .oauth_storage import ClientTokenStorage, ClientOAuth
 
-class EmptyArgsSchema(BaseModel):
-    """An empty schema for tools that have no parameters."""
-    pass
+# Module-level singleton for adapter building (stateless, efficient)
+_adapter_builder = MCPAdapterBuilder()
 
-def _safe_json_dumps(obj: Any) -> str:
-    """Safely serialize an object to JSON, handling non-serializable types."""
-    def json_serializer(obj):
-        if callable(obj):
-            return str(obj)
-        elif hasattr(obj, '__dict__'):
-            return obj.__dict__
-        else:
-            return str(obj)
-    
-    try:
-        return json.dumps(obj, default=json_serializer)
-    except Exception as e:
-        logging.warning(f"Failed to serialize object to JSON: {e}")
-        return "{}"
 
-# ── mcp: manager ─────────────────────────────────────────────────────────────
-class MCP:
+class MCPServerManager:
+    """
+    Manages MCP server connections and operations.
+
+    Provides session-isolated connection management to prevent
+    cross-user data leakage in multi-tenant environments.
+    """
+
     def __init__(self):
+        """Initialize the MCP manager."""
         self.client: Optional[MultiServerMCPClient] = None
         self.adapter_map: Dict[str, Dict[str, Any]] = {}
         self.tools: List[Any] = []
-        self.connections: Dict[str, Dict[str, Any]] = {}  # Track connected servers and their tools
-    
-    async def _get_connection_status(self, server_name: str, session_id: Optional[str] = None) -> str:
+        # Track server configs (not actual client instances)
+        self.server_configs: Dict[str, Dict[str, Any]] = {}
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Redis State Management (Delegates to redis_manager)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _get_connection_status(
+        self, server_name: str, session_id: Optional[str] = None
+    ) -> str:
         """Get connection status from Redis."""
-        print(f'DEBUG: {server_name} {session_id}, checkng connection status')
-        connection_status = await mcp_redis.get_connection_status(server_name, session_id)
-        server = await MCPServer.objects.aget(name=server_name)
-        if connection_status == "CONNECTED":
-            self.connections[server_name] = {
-                "client": None,
-                "config": {"url": server.url},
-                # "tools": tools_objs,
-            }
-        print(f'DEBUG: checkng connection status {connection_status}')
+        connection_status = await mcp_redis.get_connection_status(
+            server_name, session_id
+        )
+        logging.debug(
+            f"Connection status for {server_name} (session: {session_id}): {connection_status}"
+        )
         return connection_status
-    
-    async def _get_connection_tools(self, server_name: str, session_id: Optional[str] = None) -> List[Dict]:
+
+    async def _get_connection_tools(
+        self, server_name: str, session_id: Optional[str] = None
+    ) -> List[Dict]:
         """Get connection tools from Redis."""
         return await mcp_redis.get_connection_tools(server_name, session_id)
-    
-    async def _set_connection_status(self, server_name: str, status: str, tools: List[Dict] = None, session_id: Optional[str] = None):
+
+    async def _set_connection_status(
+        self,
+        server_name: str,
+        status: str,
+        tools: Optional[List[Dict]] = None,
+        session_id: Optional[str] = None,
+    ):
         """Set connection status in Redis."""
         await mcp_redis.set_connection_status(server_name, status, tools, session_id)
-    
-    def _patch_tools_schema(self, tools: List[Any]) -> List[Any]:
-        """Ensures all tools have a valid schema for OpenAI."""
-        for tool in tools:
-            # FIX: OpenAI requires a non-empty object for function parameters.
-            # A schema is invalid if it's missing, or if it's a dict
-            # without a 'properties' key.
-            args_schema = getattr(tool, "args_schema", None)
-            is_invalid_dict_schema = isinstance(args_schema, dict) and "properties" not in args_schema
 
-            if not args_schema or is_invalid_dict_schema:
-                tool.args_schema = EmptyArgsSchema
-        return tools
+    # ──────────────────────────────────────────────────────────────────────
+    # Server CRUD Operations
+    # ──────────────────────────────────────────────────────────────────────
 
-    def _serialize_tools(self, tools: List[Any]) -> List[Dict[str, Any]]:
-        """Convert tool objects to a serializable list of dicts for GraphQL."""
-        tools_info: List[Dict[str, Any]] = []
-        for tool in tools:
-            schema_dict = {}
-            
-            # Handle FastMCP tools (from connect_server)
-            if hasattr(tool, "inputSchema") and tool.inputSchema:
-                schema_dict = tool.inputSchema
-            elif hasattr(tool, "input_schema") and tool.input_schema:
-                schema_dict = tool.input_schema
-            # Handle LangChain MCP tools (from old client)
-            elif hasattr(tool, "args_schema"):
-                args_schema = tool.args_schema
-                if hasattr(args_schema, "schema") and callable(args_schema.schema):
-                    try:
-                        schema_dict = args_schema.schema()
-                    except Exception:
-                        pass
-                elif isinstance(args_schema, dict):
-                    schema_dict = args_schema
+    async def alist_servers(
+        self, session_id: Optional[str] = None
+    ) -> List[MCPServer]:
+        """
+        Get all public servers with session-specific connection status.
 
-            tool_info = {
-                "name": getattr(tool, 'name', str(tool)),
-                "description": getattr(tool, 'description', '') or '',
-                "schema": _safe_json_dumps(schema_dict) if schema_dict else "{}",
-            }
-            tools_info.append(tool_info)
-        return tools_info
+        Args:
+            session_id: Session identifier for isolated state
 
-    async def alist_servers(self, session_id: Optional[str] = None) -> List[MCPServer]:
-        """Get all servers with user/session-specific connection status and tool information."""
-        servers = [s async for s in MCPServer.objects.filter(is_public=True).order_by("name")]
-        
-        # Get user/session-specific connection states from Redis
+        Returns:
+            List of MCPServer instances with connection status and tools
+        """
+        servers = [
+            s
+            async for s in MCPServer.objects.filter(is_public=True).order_by("name")
+        ]
+
+        # Enrich with session-specific connection states from Redis
         for server in servers:
             try:
-                server.connection_status = await self._get_connection_status(server.name, session_id)
-                server.tools = await self._get_connection_tools(server.name, session_id)
+                server.connection_status = await self._get_connection_status(
+                    server.name, session_id
+                )
+                server.tools = await self._get_connection_tools(
+                    server.name, session_id
+                )
             except Exception as e:
-                logging.warning(f"Failed to get connection state for server {server.name}: {e}")
-                server.connection_status = "DISCONNECTED"
+                logging.warning(
+                    f"Failed to get connection state for server {server.name}: {e}"
+                )
+                server.connection_status = STATUS_DISCONNECTED
                 server.tools = []
-        
-        return servers
 
-    async def areset_all_server_statuses(self):
-        """Sets all user/session connections to DISCONNECTED on application startup."""
-        # Redis TTL will handle cleanup automatically, but we can clear all connection keys if needed
-        # This is optional since Redis TTL handles expiration
-        pass
+        return servers
 
     async def asave_server(
         self,
@@ -145,57 +139,115 @@ class MCP:
         query_params: Optional[dict] = None,
         requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False,
+        description: Optional[str] = None,
+        category_id: Optional[str] = None,
     ) -> MCPServer:
+        """
+        Create or update an MCP server configuration.
+
+        Args:
+            name: Server name
+            transport: Transport type (stdio, sse, etc.)
+            owner: User who owns this server
+            url: Server URL (for network transports)
+            command: Command to execute (for stdio)
+            args: Command arguments
+            headers: HTTP headers
+            query_params: URL query parameters
+            requires_oauth2: Whether OAuth2 is required
+            is_public: Whether server is publicly available
+            description: Description of what this server does
+            category_id: Optional category ID to assign to this server
+
+        Returns:
+            Created or updated MCPServer instance
+        """
+        defaults = {
+            "transport": transport,
+            "url": url,
+            "command": command,
+            "args": args or {},
+            "headers": headers or {},
+            "query_params": query_params or {},
+            "enabled": True,
+            "requires_oauth2": requires_oauth2,
+            "is_public": is_public,
+            "description": description,
+        }
+
+        # Add category if provided
+        if category_id is not None:
+            try:
+                category = await Category.objects.aget(pk=category_id)
+                defaults["category"] = category
+            except Category.DoesNotExist:
+                pass  # Ignore invalid category_id
+
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
             owner=owner,
-            is_public=is_public,
-            defaults={
-                "transport": transport,
-                "url": url,
-                "command": command,
-                "args": args or {},
-                "headers": headers or {},
-                "query_params": query_params or {},
-                "enabled": True,
-                "requires_oauth2": requires_oauth2,
-            },
+            defaults=defaults,
         )
-        await self.initialize_client()  # re-initialize on change
+        await self.initialize_client()  # Refresh global client if needed
         return rec
 
-    async def aremove_server(self, name: str, user: User, session_id: Optional[str] = None) -> bool:
-        try:
-            rec = await MCPServer.objects.filter(
-                    name=name,
-                    owner=user
-            ).afirst()
+    async def aremove_server(
+        self, name: str, user: User, session_id: Optional[str] = None
+    ) -> bool:
+        """
+        Remove an MCP server and clean up OAuth tokens.
 
+        Args:
+            name: Server name
+            user: User who owns the server
+            session_id: Session identifier
+
+        Returns:
+            True if server was deleted, False otherwise
+        """
+        try:
+            rec = await MCPServer.objects.filter(name=name, owner=user).afirst()
+
+            if not rec:
+                return False
+
+            # Clear OAuth tokens if applicable
             if rec.url and rec.requires_oauth2:
                 try:
-                    # Clear user-isolated tokens instead of shared tokens
                     storage = ClientTokenStorage(
                         server_url=rec.url,
                         user_id=user.username if user else None,
-                        session_id=session_id
+                        session_id=session_id,
                     )
-                    await storage.clear()
+                    storage.clear()
                 except Exception as e:
                     logging.warning(f"Failed to clear tokens for {name}: {e}")
 
             await rec.adelete()
-            # Ensure any live connection tracking is cleared
-            if name in self.connections:
-                try:
-                    del self.connections[name]
-                except Exception:
-                    pass
-            await self.initialize_client()  # re-initialize on change
+
+            # Clear from server configs
+            self.server_configs.pop(name, None)
+
+            await self.initialize_client()
             return True
+
         except MCPServer.DoesNotExist:
             return False
 
-    async def aet_server_enabled(self, name: str, enabled: bool, session_id: Optional[str] = None) -> MCPServer:
+    async def aset_server_enabled(
+        self, name: str, enabled: bool, session_id: Optional[str] = None
+    ) -> MCPServer:
+        """
+        Enable or disable an MCP server.
+
+        Args:
+            name: Server name
+            enabled: Whether server should be enabled
+            session_id: Session identifier
+
+        Returns:
+            Updated MCPServer instance
+        """
         try:
             rec = await MCPServer.objects.aget(name=name)
         except MCPServer.DoesNotExist:
@@ -203,90 +255,70 @@ class MCP:
 
         rec.enabled = enabled
         await rec.asave(update_fields=["enabled", "updated_at"])
-        
-        # If disabling, disconnect all user/session connections for this server
+
+        # Disconnect all sessions if disabling
         if not enabled:
-            await self._set_connection_status(rec.name, "DISCONNECTED", session_id=session_id)
-            
-            # Clear from global connection tracking
-            if name in self.connections:
-                try:
-                    del self.connections[name]
-                except Exception:
-                    pass
-        
-        await self.initialize_client()  # re-initialize on change
+            await self._set_connection_status(
+                rec.name, STATUS_DISCONNECTED, session_id=session_id
+            )
+            self.server_configs.pop(name, None)
+
+        await self.initialize_client()
         return rec
 
-    async def _build_adapter_map(self, names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
-        adapter_map: Dict[str, Dict[str, Any]] = {}
-        # Only build configs for explicitly provided names (connected servers)
-        if not names:
-            return adapter_map
-        qs = MCPServer.objects.filter(enabled=True, name__in=list(names))
-        async for rec in qs.all():
-            logging.debug(f"Building adapter map for: name={rec.name} transport={rec.transport}")
-            if rec.transport == "stdio":
-                adapter_map[rec.name] = {
-                    "command": rec.command or "",
-                    "args": [str(x) for x in rec.args if isinstance(rec.args, list)],
-                    "transport": "stdio",
-                }
-            else:
-                base_url = rec.url or ""
-                if rec.query_params:
-                    logging.debug(f"Merging query params for {rec.name}: {rec.query_params}")
-                    qp = rec.query_params
-                    if isinstance(qp, dict) and qp:
-                        try:
-                            parts = list(urlsplit(base_url))
-                            existing = dict(
-                                parse_qsl(parts[3], keep_blank_values=True)
-                            )
-                            merged = {**existing, **{k: v for k, v in qp.items()}}
-                            parts[3] = urlencode(merged, doseq=True)
-                            base_url = urlunsplit(parts)
-                            logging.debug(f"Final base_url for {rec.name}: {base_url}")
-                        except Exception as e:
-                            logging.warning(f"Error merging query params for {rec.name}: {e}")
+    # ──────────────────────────────────────────────────────────────────────
+    # Adapter Map Building (Delegated to MCPAdapterBuilder)
+    # ──────────────────────────────────────────────────────────────────────
 
-                entry: Dict[str, Any] = {
-                    "url": base_url,
-                    "transport": rec.transport,
-                }
-                # Attach headers from DB
-                if rec.headers and isinstance(rec.headers, dict) and rec.headers:
-                    entry["headers"] = rec.headers
-                
-                # Conditionally add OAuth2 tokens if required
-                if rec.requires_oauth2:
-                    try:
-                        storage = FileTokenStorage(server_url=rec.url)
-                        tokens = await storage.get_tokens()
-                        if tokens and tokens.access_token:
-                            # Merge with existing headers or create new headers dict
-                            if "headers" not in entry:
-                                entry["headers"] = {}
-                            entry["headers"]["Authorization"] = f"Bearer {tokens.access_token}"
-                    except Exception as e:
-                        logging.warning(f"Failed to fetch OAuth token for {rec.name}: {e}")
-                adapter_map[rec.name] = entry
-        return adapter_map
+    async def _build_adapter_map(
+        self,
+        names: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Build adapter configuration map for specified servers.
+
+        Delegates to the module-level adapter builder singleton.
+
+        Args:
+            names: List of server names to include (None = empty map)
+            session_id: Session identifier for OAuth token isolation
+            user_id: User identifier for OAuth token isolation
+
+        Returns:
+            Dictionary mapping server names to adapter configs
+        """
+        return await _adapter_builder.build_adapter_map(names, session_id, user_id)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Global Client Initialization (for shared tool access)
+    # ──────────────────────────────────────────────────────────────────────
 
     async def initialize_client(self):
-        # Restrict adapter map to only explicitly connected servers
-        connected_names = list(self.connections.keys())
+        """
+        Initialize global MultiServerMCPClient.
+
+        This is used for shared tool access across all connected servers.
+        Note: For session-isolated operations, use aget_tools() instead.
+        """
+        connected_names = list(self.server_configs.keys())
         self.adapter_map = await self._build_adapter_map(names=connected_names)
+
         if not self.adapter_map:
             self.client = None
             self.tools = []
             return
 
         try:
-            logging.debug(f"Initializing MCP client with adapter map: {self.adapter_map}")
+            logging.debug(
+                f"Initializing MCP client with adapter map: {self.adapter_map}"
+            )
             self.client = MultiServerMCPClient(self.adapter_map)
-            raw_tools = await asyncio.wait_for(self.client.get_tools(), timeout=30)
-            self.tools = self._patch_tools_schema(raw_tools)
+            raw_tools = await asyncio.wait_for(
+                self.client.get_tools(), timeout=TOOL_FETCH_TIMEOUT
+            )
+            self.tools = patch_tools_schema(raw_tools)
 
         except asyncio.TimeoutError:
             logging.warning("MCP client initialization or tool fetching timed out.")
@@ -294,96 +326,35 @@ class MCP:
             self.tools = []
         except Exception as e:
             logging.exception(f"Failed to initialize MCP client: {e}")
-            # try to handle specific transport errors
             if "SSEError" in str(e) or "text/event-stream" in str(e):
-                logging.warning("SSE transport error detected, this might be a server configuration issue")
+                logging.warning(
+                    "SSE transport error detected, check server configuration"
+                )
             self.client = None
             self.tools = []
 
-    # .. op: arestart_mcp_server
-    async def arestart_mcp_server(self, name: str, session_id: Optional[str] = None) -> tuple[str, Optional[MCPServer]]:
+    # ──────────────────────────────────────────────────────────────────────
+    # Server Connection Operations (Session-Isolated)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def connect_server(
+        self, name: str, session_id: Optional[str] = None
+    ) -> Tuple[bool, str, Optional[MCPServer]]:
         """
-        Check server health and return tools if healthy.
+        Connect to a specific MCP server using FastMCP client.
+
+        Args:
+            name: Server name
+            session_id: Session identifier for isolation
 
         Returns:
-            Tuple of (status: str, tools: List[Dict])
+            Tuple of (success, message, server_instance)
         """
         try:
+            logging.debug(f"Connecting to {name} for session {session_id}")
             server = await MCPServer.objects.aget(name=name)
-            if server.url and server.requires_oauth2:
-                try:
-                    # Clear user-isolated tokens instead of shared tokens
-                    storage = ClientTokenStorage(
-                        server_url=server.url,
-                        user_id=None,  # Could extract from server.owner if needed
-                        session_id=session_id
-                    )
-                    await storage.clear()
-                except Exception as e:
-                    logging.warning(f"Failed to clear tokens for {name}: {e}")
-        except MCPServer.DoesNotExist:
-            return "NOT_FOUND", None
-
-        if not server.enabled:
-            return "DISABLED", server
-         
-        try:
-            adapter_map = await self._build_adapter_map(names=[name])
-            if name not in adapter_map:
-                return "ERROR", server
-            
-            tools_info = []
-            if server.requires_oauth2:
-               # Use user-isolated OAuth to prevent token sharing between users
-               oauth = ClientOAuth(
-                   mcp_url=server.url,
-                   user_id=None,
-                   session_id=session_id,
-                   client_name="Inspect MCP",
-                   callback_port=8293,
-                   scopes=[],
-               )
-               async with FastMCPClient(server.url, auth=oauth) as client:
-                  await client.ping()
-                  raw_tools = await client.list_tools()
-                  tools = self._patch_tools_schema(raw_tools)
-                  tools_info = self._serialize_tools(tools)
-            else:
-                async with FastMCPClient(server.url) as client:
-                    await client.ping()
-                    raw_tools = await client.list_tools()
-                    tools = self._patch_tools_schema(raw_tools)
-                    tools_info = self._serialize_tools(tools)
-            # Update session-specific connection in Redis
-            await self._set_connection_status(server.name, "CONNECTED", tools_info, session_id)
-            
-            # Update server object for return
-            server.tools = tools_info
-            server.connection_status = "CONNECTED"
-            
-            return "OK", server
-        except asyncio.TimeoutError:
-            return "TIMEOUT", server
-        except Exception as e:
-            print(f"Health check for {name} failed: {e}")
-            logging.warning(f"Health check for {name} failed: {e}")
-            return "ERROR", server  
-
-    # .. op: connect_server
-    async def connect_server(self, name: str, session_id: Optional[str] = None) -> Tuple[bool, str, Optional[MCPServer]]:
-        """
-        Connect to a specific MCP server using FastMCP's client and return tools.
-        Conditionally uses OAuth2 authentication based on the requires_oauth2 field.
-        """
-        try:
-            print(f'DEBUG: connecting to {name} for session {session_id}')
-            server = await MCPServer.objects.aget(name=name)
-            print(server, 'server in connect_server')
         except MCPServer.DoesNotExist:
             return False, "Server not found", None
-
-        # if not server.enabled:
-        #     return False, "Server is disabled", []
 
         if not server.url:
             return False, "Server URL is not configured", server
@@ -392,119 +363,151 @@ class MCP:
             return False, "FastMCP client is not available", server
 
         try:
-            # Check if OAuth2 is required for this server
-            if server.requires_oauth2:
-                # Use user-isolated OAuth to prevent token sharing between users
-                oauth = ClientOAuth(
-                    mcp_url=server.url,
-                    user_id=None,  # We'll extract from server or use session_id
-                    session_id=session_id,
-                    client_name="Inspect MCP",
-                    callback_port=8293,
-                    scopes=[],
-                    # scopes=["openid", "email", "profile"],
-                )
-                async with FastMCPClient(server.url, auth=oauth) as client:  # type: ignore
-                    await asyncio.wait_for(client.ping(), timeout=30.0)
-                    tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
-            else:
-                # Use FastMCP client without authentication
-                async with FastMCPClient(server.url) as client:  # type: ignore
-                    await asyncio.wait_for(client.ping(), timeout=30.0)
-                    tools_objs = await asyncio.wait_for(client.list_tools(), timeout=30.0)
+            # Attempt connection with optional OAuth
+            tools_objs = await self._connect_and_fetch_tools(
+                server, session_id
+            )
 
-            # convert tools for storage/GraphQL
-            tools = self._patch_tools_schema(tools_objs)
-            tools_info = self._serialize_tools(tools)
+            # Serialize and store tools
+            tools = patch_tools_schema(tools_objs)
+            tools_info = serialize_tools(tools)
+
             # Update session-specific connection in Redis
-            await self._set_connection_status(server.name, "CONNECTED", tools_info, session_id)
-            self.connections[server.name] = {
-                "client": None,
-                "config": {"url": server.url},
-                # "tools": tools_objs,
-            }
+            await self._set_connection_status(
+                server.name, STATUS_CONNECTED, tools_info, session_id
+            )
+
+            # Track server config (not actual client)
+            self.server_configs[server.name] = {"url": server.url}
 
             # Update server object for return
-            server.connection_status = "CONNECTED"
+            server.connection_status = STATUS_CONNECTED
             server.tools = tools_info
 
             return True, "Connected successfully", server
 
         except asyncio.TimeoutError:
-            # Timeout while pinging or listing tools
-            try:
-                await self._set_connection_status(server.name, "FAILED", [], session_id)
-                server.connection_status = "FAILED"
-                server.tools = []
-            except Exception:
-                pass
+            await self._set_connection_status(
+                server.name, STATUS_FAILED, [], session_id
+            )
+            server.connection_status = STATUS_FAILED
+            server.tools = []
             return False, "Connection timeout", server
+
         except Exception as e:
-            # Update state and report the error message
-            try:
-                await self._set_connection_status(server.name, "FAILED", [], session_id)
-                server.connection_status = "FAILED"
-                server.tools = []
-            except Exception:
-                pass
+            await self._set_connection_status(
+                server.name, STATUS_FAILED, [], session_id
+            )
+            server.connection_status = STATUS_FAILED
+            server.tools = []
             return False, f"Connection failed: {str(e)}", server
 
-    # .. op: disconnect_server
-    async def disconnect_server(self, name: str, session_id: Optional[str] = None) -> Tuple[bool, str, Optional[MCPServer]]:
+    async def _connect_and_fetch_tools(
+        self, server: MCPServer, session_id: Optional[str]
+    ) -> List[Any]:
+        """
+        Connect to server and fetch tools (with or without OAuth).
+
+        For OAuth servers, this uses SimpleTokenAuth which loads existing tokens
+        from storage without setting up callback handlers. The OAuth flow itself
+        is handled separately via the API endpoint approach.
+
+        Args:
+            server: MCPServer instance
+            session_id: Session identifier
+
+        Returns:
+            List of tool objects
+        """
+        if server.requires_oauth2:
+            # Use SimpleTokenAuth to load existing tokens without callback handlers
+            # The OAuth flow is handled via API endpoint (oauth_helper.py)
+            auth = SimpleTokenAuth(
+                server_url=server.url,
+                user_id=None,  # Could extract from server.owner if needed
+                session_id=session_id,
+            )
+            async with FastMCPClient(server.url, auth=auth) as client:
+                await asyncio.wait_for(client.ping(), timeout=MCP_CLIENT_TIMEOUT)
+                return await asyncio.wait_for(
+                    client.list_tools(), timeout=TOOL_FETCH_TIMEOUT
+                )
+        else:
+            async with FastMCPClient(server.url) as client:
+                await asyncio.wait_for(client.ping(), timeout=MCP_CLIENT_TIMEOUT)
+                return await asyncio.wait_for(
+                    client.list_tools(), timeout=TOOL_FETCH_TIMEOUT
+                )
+
+    async def disconnect_server(
+        self, name: str, session_id: Optional[str] = None
+    ) -> Tuple[bool, str, Optional[MCPServer]]:
         """
         Disconnect from a specific MCP server.
-        
+
+        Args:
+            name: Server name
+            session_id: Session identifier
+
         Returns:
-            Tuple of (success: bool, status_message: str, server: MCPServer)
+            Tuple of (success, message, server_instance)
         """
         try:
-            # Get the server object first
             try:
                 server = await MCPServer.objects.aget(name=name)
             except MCPServer.DoesNotExist:
                 return False, "Server not found", None
-            
-            # Check user/session-specific connection status
-            try:
-                current_status = await self._get_connection_status(server.name, session_id)
-                if current_status != "CONNECTED":
-                    return False, "Server not connected", server
-            except Exception as e:
-                logging.warning(f"Failed to get connection for server {name}: {e}")
+
+            # Verify current connection status
+            current_status = await self._get_connection_status(server.name, session_id)
+            if current_status != STATUS_CONNECTED:
                 return False, "Server not connected", server
-            
-            # Update user/session-specific connection status in Redis
-            await self._set_connection_status(server.name, "DISCONNECTED", [], session_id)
+
+            # Update session-specific connection status
+            await self._set_connection_status(
+                server.name, STATUS_DISCONNECTED, [], session_id
+            )
 
             # Update server object for return
-            server.connection_status = "DISCONNECTED"
+            server.connection_status = STATUS_DISCONNECTED
             server.tools = []
 
             return True, "Disconnected successfully", server
-            
+
         except Exception as e:
             logging.exception(f"Failed to disconnect from server {name}: {e}")
-            # Try to get server for error response
             try:
                 server = await MCPServer.objects.aget(name=name)
                 return False, f"Disconnect failed: {str(e)}", server
             except MCPServer.DoesNotExist:
                 return False, f"Disconnect failed: {str(e)}", None
 
-    # ── per-session/user tools (no global state) ──────────────────────────────
-    async def aget_tools(self, session_id: Optional[str] = None) -> List[Any]:
-        """Return tool objects only for servers connected for this user/session.
+    # ──────────────────────────────────────────────────────────────────────
+    # Session-Isolated Tool Retrieval (No Global State Mutation)
+    # ──────────────────────────────────────────────────────────────────────
 
-        This avoids mutating global client/tool state to prevent cross-user leakage.
+    async def aget_tools(self, session_id: Optional[str] = None) -> List[Any]:
+        """
+        Get tool objects for servers connected in this session.
+
+        This creates a throwaway client scoped to the session to avoid
+        global state mutation and cross-user leakage.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            List of tool objects for connected servers
         """
         try:
-            # Determine which enabled/public servers are connected for this context
+            # Determine which servers are connected for this session
             connected_names: List[str] = []
-            qs = MCPServer.objects.filter(enabled=True, is_public=True)
+            qs = MCPServer.objects.filter(enabled=True)
+
             async for rec in qs:
                 try:
                     status = await self._get_connection_status(rec.name, session_id)
-                    if status == "CONNECTED":
+                    if status == STATUS_CONNECTED:
                         connected_names.append(rec.name)
                 except Exception:
                     # Ignore lookup failures for individual servers
@@ -513,23 +516,30 @@ class MCP:
             if not connected_names:
                 return []
 
-            adapter_map = await self._build_adapter_map(names=connected_names)
+            # Build throwaway adapter map for this session with OAuth token context
+            adapter_map = await self._build_adapter_map(
+                names=connected_names,
+                session_id=session_id
+            )
+            print(f"DEBUG: aget_tools adapter_map: {adapter_map}")
             if not adapter_map:
                 return []
 
-            # Build a throwaway client scoped to this context
+            # Create session-scoped client
             client = MultiServerMCPClient(adapter_map)
-            
-            raw_tools = await asyncio.wait_for(client.get_tools(), timeout=30)
-            return self._patch_tools_schema(raw_tools)
+
+            raw_tools = await asyncio.wait_for(
+                client.get_tools(), timeout=TOOL_FETCH_TIMEOUT
+            )
+            return patch_tools_schema(raw_tools)
+
         except asyncio.TimeoutError:
-            logging.warning("Timed out fetching tools for user/session context")
+            logging.warning("Timed out fetching tools for session context")
             return []
         except Exception as e:
             logging.exception(f"Failed to get tools for context: {e}")
             return []
 
-# global instance
-mcp = MCP()
 
-
+# Global instance
+mcp = MCPServerManager()

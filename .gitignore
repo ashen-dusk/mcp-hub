@@ -6,3 +6,13 @@ env/
 # ignore django migrations
 **/migrations/*.py
 !**/migrations/
+
+.venv/
+venv/
+
+# Ignore database files
+*.sqlite3
+
+# Ignore log files and directory
+logs/
+*.log.*

@@ -9,6 +9,12 @@ urlpatterns = [
     path('', views.home, name='home'),
     path('health/', views.health_check, name='health_check'),
 
+    # OAuth callback endpoint (no trailing slash to match redirect_uri exactly)
+    path('oauth-callback', views.oauth_callback, name='oauth_callback'),
+
+    # Audio Transcription endpoint
+    path('transcribe/', views.transcribe_audio, name='transcribe_audio'),
+
     # AG-UI Protocol endpoint
     path(
         "langgraph-agent",
@@ -19,7 +25,7 @@ urlpatterns = [
     # GraphQL endpoint
     path(
         "graphql",
-        csrf_exempt(AsyncGraphQLView.as_view(schema=schema, graphiql=getattr(settings, "DEBUG", False))),
+        csrf_exempt(AsyncGraphQLView.as_view(schema=schema, graphql_ide="graphiql" if getattr(settings, "DEBUG", False) else None)),
         name="graphql",
     ),
 ]

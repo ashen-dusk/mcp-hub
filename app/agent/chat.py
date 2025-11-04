@@ -1,16 +1,18 @@
 
 import os
-from datetime import datetime
 import logging
-from langchain_core.messages import SystemMessage
+from typing import Optional
+from datetime import datetime, timezone, timedelta
+
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_tavily import TavilySearch
+from langchain_core.tools import tool
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
-from langchain_tavily import TavilySearch
-from langchain_core.tools import tool
 from app.mcp.manager import mcp
-from typing import Optional
+import platform
 
 @tool
 def get_current_datetime() -> str:
@@ -26,8 +28,13 @@ def search_web(query: str) -> str:
     search = TavilySearch(max_results=3)
     return search.invoke(query)
 
+@tool
+def get_system_info() -> str:
+    """Return basic information about the system environment."""
+    return f"{platform.system()} {platform.release()} ({platform.processor()})"
+    
 async def get_tools(sessionId: Optional[str]=None):
-    tools_list = [get_current_datetime]
+    tools_list = [get_system_info]
     # sessionId = 'html78910'
     # get tools from MCP manager scoped to user/session
     try:
@@ -41,30 +48,59 @@ async def get_tools(sessionId: Optional[str]=None):
 
 async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
-    # sessionId = config["configurable"].get("copilotkit_auth")
     sessionId = state.get("sessionId", None)
+    assistant = state.get("assistant", None)
     print('chat_node: sessionId in chat_node', sessionId)
     print(state, 'state in chat_node')
+
+    # Clear previous tool call state when processing a new user message
+    # (not when returning from tool execution)
+    messages = state.get("messages", [])
+    if messages and isinstance(messages[-1], HumanMessage):
+        state["current_tool_call"] = None
+
     tools = await get_tools(sessionId=sessionId)
-    # user_id = state.get("user_id", None)
-    # toolkit_names = state.get("toolkit", [])
+    # === Extract config values from assistant ===
+    assistant_config = assistant.get("config", {}) if assistant else {}
+    datetime_context = assistant_config.get("datetime_context", False)
 
+    # === Bind LLM with tools (temperature and max_tokens are extracted inside get_llm) ===
+    llm = get_llm(state)
+    llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False)
 
-    llm_with_tools = get_llm(state).bind_tools(tools, parallel_tool_calls=False)
-        
-    system_message = f"""
-        You are a helpful assistant that can answer questions and perform tasks using the MCP servers.
+    # === Build system message with conditional datetime ===
+    base_system_message = "You are a helpful assistant named MCP Assistant that can answer questions and perform tasks using the MCP servers."
+
+    if datetime_context:
+        ist_timezone = timezone(timedelta(hours=5, minutes=30))
+        ist_now = datetime.now(ist_timezone)
+        datetime_str = f"""
+        Today's date: {ist_now.strftime("%Y-%m-%d")}
+        Current time (IST): {ist_now.strftime("%H:%M:%S")}
         """
+        base_system_message = datetime_str.strip() + "\n\n" + base_system_message
+
+    # Add assistant-specific instructions
+    if assistant and assistant.get("instructions"):
+        system_message = f"""{base_system_message}
+
+        # Custom Assistant Instructions
+        {assistant.get("instructions")}
+        
+        Follow the custom instructions above while helping the user.
+        """
+    else:
+        system_message = base_system_message
+
     response = await llm_with_tools.ainvoke(
         [
             SystemMessage(content=system_message),
             *state["messages"]
         ],
         config=config,
-        )
+    )
     print(response, "response in chat_node")
     return {
         **state,
         "messages": [*state["messages"], response],
     }
-    
