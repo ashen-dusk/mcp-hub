@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils.text import slugify
 import uuid
 import shortuuid
 
@@ -11,6 +12,7 @@ class Category(models.Model):
     """
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     name = models.CharField(max_length=100, unique=True, help_text="Unique category name")
+    slug = models.SlugField(max_length=120, unique=True, blank=True, null=True, help_text="URL-friendly slug for category")
     icon = models.TextField(blank=True, null=True, help_text="Icon identifier (URL, emoji, icon name, or icon class)")
     color = models.CharField(max_length=20, blank=True, null=True, help_text="Color code for UI display (hex, rgb, or color name)")
     description = models.TextField(blank=True, null=True, help_text="Description of this category")
@@ -29,6 +31,11 @@ class Category(models.Model):
     def save(self, *args, **kwargs):
         if not self.id:
             self.id = f"ctg_{shortuuid.uuid()}"
+
+        # ✅ Added slug generation (new functionality)
+        if not self.slug:
+            self.slug = slugify(self.name)
+
         super().save(*args, **kwargs)
 
 # ── MCPServer: model ─────────────────────────────────────────────────────────────

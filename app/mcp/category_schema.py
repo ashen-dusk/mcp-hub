@@ -50,6 +50,7 @@ class Mutation:
         icon: Optional[str] = None,
         color: Optional[str] = None,
         description: Optional[str] = None,
+        slug: Optional[str] = None,
     ) -> CategoryType:
         """
         Create a new category.
@@ -65,6 +66,7 @@ class Mutation:
             icon=icon,
             color=color,
             description=description,
+            slug=slug
         )
         return category
 
@@ -77,6 +79,8 @@ class Mutation:
         icon: Optional[str] = None,
         color: Optional[str] = None,
         description: Optional[str] = None,
+        slug: Optional[str] = None,
+        
     ) -> CategoryType:
         """
         Update an existing category.
@@ -94,6 +98,9 @@ class Mutation:
                 category.color = color
             if description is not None:
                 category.description = description
+            if slug is not None:
+                category.slug = slug
+
 
             await category.asave()
             return category
