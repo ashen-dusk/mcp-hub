@@ -17,6 +17,7 @@ from app.mcp.manager import mcp
 from app.mcp.oauth_helper import exchange_authorization_code
 from copilotkit import LangGraphAGUIAgent
 from app.agent.plan_and_execute import plan_and_execute_graph
+from app.agent.agent import graph
 # from ag_ui_langgraph.agent import LangGraphAgent
 def home(request):
     return HttpResponse("MCP Hub is running 🚀")
@@ -207,7 +208,7 @@ async def agui_langgraph_handler(request):
     Accepts RunAgentInput and streams AG-UI protocol events via SSE.
     """
     try:
-        agent = LangGraphAGUIAgent(name="mcpAssistant", description="Agent for mcp's", graph=plan_and_execute_graph)
+        agent = LangGraphAGUIAgent(name="mcpAssistant", description="Agent for mcp's", graph=graph)
         
         # Parse request body
         body_bytes = request.body
