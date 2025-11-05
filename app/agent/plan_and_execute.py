@@ -15,7 +15,7 @@ import logging
 from typing import Dict, Any, List, Literal, Annotated
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
@@ -135,7 +135,6 @@ Guidelines:
             logger.info(f"Created plan with {len(steps)} steps: {steps}")
 
             # Add tool response message
-            from langchain_core.messages import ToolMessage
             tool_response = ToolMessage(
                 content="Plan created.",
                 tool_call_id=tool_call.get("id"),
@@ -350,7 +349,6 @@ After calling the function, give a very brief status update (one sentence)."""
             logger.info(f"Updated plan with {len(new_plan)} remaining steps")
 
             # Add tool response
-            from langchain_core.messages import ToolMessage
             tool_response = ToolMessage(
                 content="Plan updated.",
                 tool_call_id=tool_call.get("id"),
