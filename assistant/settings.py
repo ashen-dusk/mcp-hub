@@ -144,19 +144,17 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS and CSRF for Next.js frontend domain(s) and Chrome extension
+APP_URLS = [url.strip() for url in config('NEXT_PUBLIC_APP_URLS', default='http://localhost:3000').split(',')]
+
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
-    os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
-]
+CORS_ALLOWED_ORIGINS = APP_URLS
 
 # Allow Chrome extension origins using regex
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^chrome-extension://[a-zA-Z0-9]+$",
 ]
 
-CSRF_TRUSTED_ORIGINS = [
-    os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
-]
+CSRF_TRUSTED_ORIGINS = APP_URLS
 
 # Redis configuration for MCP connection state
 REDIS_URL = os.getenv('REDIS_URL', 'redis://default:mVDKhSr3mZzjbaEUix6xsAYcQbQMV9Rk@redis-10792.crce179.ap-south-1-1.ec2.redns.redis-cloud.com:10792')
