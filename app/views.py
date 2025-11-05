@@ -18,6 +18,8 @@ from app.mcp.oauth_helper import exchange_authorization_code
 from copilotkit import LangGraphAGUIAgent
 from app.agent.plan_and_execute import plan_and_execute_graph
 from app.agent.agent import graph
+from django.conf import settings
+
 # from ag_ui_langgraph.agent import LangGraphAgent
 def home(request):
     return HttpResponse("MCP Hub is running 🚀")
@@ -58,10 +60,12 @@ async def oauth_callback(request):
 
         logging.info(f"[OAuth Callback] Received callback - state: {state[:8] if state else 'None'}..., error: {error}")
 
+        # Pick matching frontend URL based on request referer or default to first one in settings.APP_URLS
+        referer = request.headers.get('referer', '')
+        frontend_url = next((url for url in settings.APP_URLS if url in referer), settings.APP_URLS[0])
         # Handle OAuth errors
         if error:
             logging.error(f"[OAuth Callback] OAuth error: {error} - {error_description}")
-            frontend_url = os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
             error_params = urlencode({
                 'error': error,
                 'error_description': error_description
@@ -102,7 +106,6 @@ async def oauth_callback(request):
         )
 
         # Redirect to frontend MCP page
-        frontend_url = os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
         success_params = urlencode({
             'server': server_name,
             'step': 'success'
