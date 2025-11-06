@@ -53,11 +53,11 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
         state["approval_response"] = None
 
     # Update state to show tool is executing
-    state["current_tool_call"] = {
-        "name": tool_name,
-        "args": tool_args,
-        "status": "executing"
-    }
+    # state["current_tool_call"] = {
+    #     "name": tool_name,
+    #     "args": tool_args,
+    #     "status": "executing"
+    # }
 
     tool_node = ToolNode(tools)
     result = await tool_node.ainvoke(state, config)
@@ -87,13 +87,6 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
         if tool_calls:
             tool_call = tool_calls[0]
 
-            # Set current tool call state for frontend rendering
-            state["current_tool_call"] = {
-                "name": tool_call.get("name"),
-                "args": tool_call.get("args"),
-                "status": "awaiting_approval"
-            }
-
             # Use interrupt() to pause and send data to client
             # The client can resume with approval/denial
             approval_response = interrupt({
@@ -104,9 +97,32 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
                 "message": f"Do you want to execute {tool_call.get('name')}?"
             })
 
-            # Store the approval response in state for async_tool_node to use
+           
+           # Store the approval response in state for async_tool_node to use
             if approval_response:
-                state["approval_response"] = approval_response
+
+                # Convert JSON string to dict if needed
+                if isinstance(approval_response, str):
+                    try:
+                       approval_response = json.loads(approval_response)
+                    except json.JSONDecodeError:
+                       approval_response = {}
+
+                if isinstance(approval_response, dict):
+                   approved = approval_response.get("approved", False)
+                   action = approval_response.get("action", "").upper()
+                   # Get current tool call info
+            
+                   if not approved or action == "CANCEL":
+                        print("User denied tool execution or cancelled.")
+
+                        state["approval_response"] = approval_response
+                   else:   
+                        state["current_tool_call"] = {
+                            "name": tool_call.get("name"),
+                            "args": tool_call.get("args"),
+                            "status": "executing"
+                        }
 
     return state
 
