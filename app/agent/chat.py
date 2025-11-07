@@ -1,18 +1,48 @@
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, AsyncIterator
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
+from langchain_core.callbacks.base import AsyncCallbackHandler
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
 from app.mcp.manager import mcp
 import platform
+
+
+class ThinkingCallbackHandler(AsyncCallbackHandler):
+    """Callback handler to capture and emit thinking/reasoning blocks during streaming."""
+
+    def __init__(self):
+        self.thinking_content = []
+
+    async def on_llm_new_token(self, token: str, **kwargs) -> None:
+        """Called when a new token is generated."""
+        # Check if this token is part of a thinking block
+        # Claude models with extended_thinking will have thinking blocks
+        # in the format: <thinking>...</thinking>
+        pass
+
+    async def on_llm_start(self, serialized, prompts, **kwargs) -> None:
+        """Called when LLM starts."""
+        self.thinking_content = []
+
+    async def on_llm_end(self, response, **kwargs) -> None:
+        """Called when LLM ends."""
+        # Extract thinking blocks from response if present
+        if hasattr(response, 'generations') and response.generations:
+            for generation in response.generations:
+                for gen in generation:
+                    if hasattr(gen, 'message') and hasattr(gen.message, 'additional_kwargs'):
+                        thinking = gen.message.additional_kwargs.get('thinking')
+                        if thinking:
+                            self.thinking_content.append(thinking)
 
 @tool
 def get_current_datetime() -> str:
@@ -86,11 +116,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
         # Custom Assistant Instructions
         {assistant.get("instructions")}
-        
+
         Follow the custom instructions above while helping the user.
         """
     else:
         system_message = base_system_message
+
+    # Create callback handler for thinking
+    thinking_handler = ThinkingCallbackHandler()
 
     response = await llm_with_tools.ainvoke(
         [
@@ -99,6 +132,23 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         ],
         config=config,
     )
+
+    # Extract thinking blocks from Claude's extended thinking
+    thinking_blocks = []
+    if hasattr(response, 'content') and isinstance(response.content, list):
+        for content_block in response.content:
+            if isinstance(content_block, dict):
+                # Check for thinking block in Claude's response
+                if content_block.get('type') == 'thinking':
+                    thinking_blocks.append(content_block.get('thinking', ''))
+
+    # Store thinking blocks in the response for streaming
+    if thinking_blocks:
+        print(f"💭 Captured {len(thinking_blocks)} thinking blocks")
+        if not hasattr(response, 'additional_kwargs'):
+            response.additional_kwargs = {}
+        response.additional_kwargs['thinking_blocks'] = thinking_blocks
+
     print(response, "response in chat_node")
     return {
         **state,

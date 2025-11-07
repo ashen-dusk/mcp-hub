@@ -6,6 +6,7 @@ import os
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 
 from app.agent.types import AgentState
 
@@ -25,6 +26,33 @@ def get_llm(state: AgentState) -> BaseChatModel:
     max_tokens = assistant_config.get("max_tokens")  # can be None
 
     print(f"Model: {model_name}, Temperature: {temperature}, Max Tokens: {max_tokens}")
+
+    # Handle Claude/Anthropic models with extended thinking
+    if model_name.startswith("claude"):
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY environment variable is not set. "
+                "Please set it in your .env file or environment variables."
+            )
+
+        # Build model kwargs with extended thinking enabled
+        model_kwargs = {
+            "model": model_name,
+            "api_key": api_key,
+            "temperature": temperature,
+            "streaming": True,
+        }
+        if max_tokens is not None:
+            model_kwargs["max_tokens"] = max_tokens
+
+        # Enable extended thinking for supported models
+        # This shows the model's reasoning process before generating the final answer
+        if "sonnet" in model_name or "opus" in model_name:
+            model_kwargs["extended_thinking"] = True
+            print(f"✨ Extended thinking enabled for {model_name}")
+
+        return ChatAnthropic(**model_kwargs)
 
     # Handle OpenRouter models first (detected by :free suffix)
     if ":free" in model_name:
