@@ -1,47 +1,14 @@
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Annotated
 from langgraph.graph import MessagesState
 from copilotkit import CopilotKitState
 from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 
 
 class PlanStep(BaseModel):
-    """Represents a single step in the execution plan."""
-
-    step_number: int = Field(description="Step number in the plan")
-    description: str = Field(description="Description of what this step should accomplish")
-    dependencies: List[int] = Field(
-        default_factory=list,
-        description="List of step numbers that must be completed before this step"
-    )
-    expected_outcome: str = Field(description="Expected outcome or result of this step")
-    status: str = Field(
-        default="pending",
-        description="Status: pending, in_progress, completed, failed, skipped"
-    )
-    result: Optional[str] = Field(
-        default=None,
-        description="Actual result after execution"
-    )
-    error: Optional[str] = Field(
-        default=None,
-        description="Error message if step failed"
-    )
-
-
-class Plan(BaseModel):
-    """Represents the complete execution plan."""
-
-    objective: str = Field(description="Overall objective/goal of the plan")
-    steps: List[PlanStep] = Field(
-        default_factory=list,
-        description="List of steps to execute"
-    )
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    plan_summary: Optional[str] = Field(
-        default=None,
-        description="Human-readable summary of the plan"
-    )
+    """A step in the plan."""
+    description: str = Field(description="The step description")
+    status: str = Field(description="The status of the step", default="pending")
 
 
 class AgentState(CopilotKitState):
@@ -57,35 +24,47 @@ class AgentState(CopilotKitState):
     current_tool_call: Optional[Dict[str, Any]] = None
 
     # Plan-and-Execute fields
-    plan: Optional[Plan] = Field(
+    plan: Optional[List[str]] = Field(
         default=None,
-        description="Current execution plan"
+        description="List of remaining step descriptions to execute"
     )
-    current_step_index: int = Field(
-        default=0,
-        description="Index of the current step being executed"
-    )
-    execution_mode: str = Field(
-        default="simple",
-        description="Execution mode: 'simple' for direct execution, 'plan' for plan-and-execute"
-    )
-    plan_approved: bool = Field(
-        default=False,
-        description="Whether the plan has been approved by user (if human-in-the-loop)"
-    )
-    task_context: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Additional context for the overall task"
-    )
-    execution_history: List[Dict[str, Any]] = Field(
+    past_steps: Optional[List[tuple]] = Field(
         default_factory=list,
-        description="History of step executions with results"
+        description="List of (step, result) tuples for completed steps"
     )
-    needs_tools: bool = Field(
-        default=False,
-        description="Whether the current step needs tool execution"
-    )
-    plan_state: Optional[Dict[str, Any]] = Field(
+    response: Optional[str] = Field(
         default=None,
-        description="Frontend-formatted plan state for UI rendering"
+        description="Final response when task is complete"
     )
+
+
+# ============================================================================
+# Tools
+# ============================================================================
+
+@tool
+def create_plan(
+    steps: Annotated[List[PlanStep], "Array of step objects with description and status"]
+):
+    """Create a step-by-step plan to solve the user's request."""
+    return "Plan created successfully"
+
+
+@tool
+def update_plan(
+    steps: Annotated[List[PlanStep], "Array of remaining step objects"]
+):
+    """Update the plan with remaining steps based on execution results."""
+    return "Plan updated successfully"
+
+
+@tool
+def human_input(
+    prompt: Annotated[str, "The question to show to the human"],
+    context: Annotated[str, "Additional context"] = ""
+):
+    """
+    Request input from the human user. Use when you need clarification,
+    additional information, confirmation, or user choices.
+    """
+    return "Waiting for human input"

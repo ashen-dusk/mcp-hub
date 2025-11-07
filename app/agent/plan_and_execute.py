@@ -14,12 +14,13 @@ from datetime import datetime
 from typing import Dict, Any, List, Literal
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_openai import ChatOpenAI
 
-from app.agent.types import AgentState, Plan, PlanStep
+from app.agent.types import AgentState, PlanStep, create_plan
 from app.agent.model import get_llm
 from app.agent.chat import get_tools
 from langgraph.prebuilt import ToolNode
@@ -110,149 +111,61 @@ class PlannerOutput(BaseModel):
 
 
 async def plan_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
-    """
-    Creates a plan by breaking down the user's request into steps.
-
-    Simple and focused - just generates a list of steps to execute.
-    """
+    """Create initial plan from user query."""
     logger.info("=== Planning ===")
 
     messages = state.get("messages", [])
-    sessionId = state.get("sessionId")
+    user_input = messages[-1].content if messages else ""
 
-    # Get user query
-    user_query = None
-    for msg in reversed(messages):
-        if isinstance(msg, HumanMessage):
-            user_query = msg.content
-            break
+    system_prompt = """Create a clear step-by-step plan for the user's request.
+    Call the `create_plan` function with your plan. Keep steps simple and actionable."""
 
-    if not user_query:
-        logger.warning("No user query found")
-        return state
+    # Configure predict_state for UI streaming
+    if config is None:
+        config = RunnableConfig(recursion_limit=25)
+    config["metadata"] = config.get("metadata", {})
+    config["metadata"]["predict_state"] = [{
+        "state_key": "plan",
+        "tool": "create_plan",
+        "tool_argument": "steps",
+    }]
 
-    # Get available tools
-    tools = await get_tools(sessionId=sessionId)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm_with_tools = llm.bind_tools([create_plan], parallel_tool_calls=False)
 
-    # Planning prompt (tools will be bound to LLM, no need to list them)
-    system_prompt = """You are a task planner. Break down the user's request into clear, sequential steps.
+    response = await llm_with_tools.ainvoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_input)
+    ], config)
 
-Create a plan with 3-7 steps. Each step should be:
-- Clear and specific
-- Actionable with available tools
-- Ordered logically
+    # Extract plan
+    steps = []
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        tool_call = response.tool_calls[0]
+        if tool_call.get("name") == "create_plan":
+            steps = [step["description"] for step in tool_call.get("args", {}).get("steps", [])]
+            logger.info(f"Created plan with {len(steps)} steps")
 
-Return ONLY a JSON object with this format:
-{
-    "steps": [
-        "Step 1 description",
-        "Step 2 description",
-        "Step 3 description"
-    ]
-}"""
+            tool_msg = ToolMessage(
+                content="Plan created.",
+                tool_call_id=tool_call.get("id"),
+                name="create_plan"
+            )
 
-    llm = get_llm(state)
-
-    # Bind tools so LLM is aware of capabilities without explicitly listing them
-    # This saves tokens while providing context about what's possible
-    llm_with_tools = llm.bind_tools(tools)
-
-    try:
-        # Try structured output with tool-aware LLM
-        if hasattr(llm_with_tools, 'with_structured_output'):
-            structured_llm = llm_with_tools.with_structured_output(PlannerOutput)
-            response = await structured_llm.ainvoke([
+            summary = await llm.ainvoke([
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Create a plan for: {user_query}")
-            ])
-            step_descriptions = response.steps
-        else:
-            # Fallback: parse JSON
-            response = await llm_with_tools.ainvoke([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"Create a plan for: {user_query}")
-            ])
-            import json
-            response_text = response.content if hasattr(response, 'content') else str(response)
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                parsed = json.loads(response_text[json_start:json_end])
-                step_descriptions = parsed.get("steps", [])
-            else:
-                raise ValueError("No JSON found in response")
+                HumanMessage(content=user_input),
+                response,
+                tool_msg
+            ], config)
 
-        # Create Plan object
-        plan = Plan(
-            objective=user_query,
-            plan_summary=f"Plan with {len(step_descriptions)} steps",
-            steps=[
-                PlanStep(
-                    step_number=i + 1,
-                    description=desc,
-                    dependencies=[],
-                    expected_outcome=f"Complete step {i + 1}",
-                    status="pending"
-                )
-                for i, desc in enumerate(step_descriptions)
-            ],
-            created_at=datetime.now().isoformat()
-        )
+            return {
+                "plan": steps,
+                "past_steps": [],
+                "messages": messages + [response, tool_msg, summary]
+            }
 
-        logger.info(f"Created plan with {len(plan.steps)} steps")
-
-        # Emit state to frontend using CopilotKit
-        # config = copilotkit_customize_config(
-        #     config,
-        #     emit_intermediate_state=[{
-        #         "state_key": "plan_state",
-        #         "tool": "__plan_state__"
-        #     }]
-        # )
-
-        new_state = {
-            **state,
-            "plan": plan,
-            "current_step_index": 0,
-            "plan_state": get_plan_state_for_frontend({**state, "plan": plan, "current_step_index": 0}),
-            "messages": [
-                *messages,
-                AIMessage(content=f"I've created a plan with {len(plan.steps)} steps:\n\n" +
-                         "\n".join([f"{i+1}. {step.description}" for i, step in enumerate(plan.steps)]))
-            ]
-        }
-
-        # await copilotkit_emit_state(config, new_state)
-
-        return new_state
-
-    except Exception as e:
-        logger.error(f"Planning error: {e}", exc_info=True)
-        # Fallback: single-step plan
-        plan = Plan(
-            objective=user_query,
-            plan_summary="Direct execution",
-            steps=[
-                PlanStep(
-                    step_number=1,
-                    description=user_query,
-                    dependencies=[],
-                    expected_outcome="Complete the task",
-                    status="pending"
-                )
-            ],
-            created_at=datetime.now().isoformat()
-        )
-
-        new_state = {
-            **state,
-            "plan": plan,
-            "current_step_index": 0,
-            "plan_state": get_plan_state_for_frontend({**state, "plan": plan, "current_step_index": 0}),
-            "messages": [*messages, AIMessage(content="Let me work on that.")]
-        }
-
-        return new_state
+    return {"plan": [], "past_steps": [], "messages": messages + [response]}
 
 
 # ============================================================================
