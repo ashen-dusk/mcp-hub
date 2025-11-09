@@ -56,36 +56,16 @@ class AgentState(CopilotKitState):
     approval_response: Optional[Dict[str, Any]] = None
     current_tool_call: Optional[Dict[str, Any]] = None
 
-    # Plan-and-Execute fields
-    plan: Optional[Plan] = Field(
+    # Plan-and-Execute fields (simplified following LangGraph tutorial pattern)
+    plan: Optional[List[str]] = Field(
         default=None,
-        description="Current execution plan"
+        description="List of remaining step descriptions to execute"
     )
-    current_step_index: int = Field(
-        default=0,
-        description="Index of the current step being executed"
-    )
-    execution_mode: str = Field(
-        default="simple",
-        description="Execution mode: 'simple' for direct execution, 'plan' for plan-and-execute"
-    )
-    plan_approved: bool = Field(
-        default=False,
-        description="Whether the plan has been approved by user (if human-in-the-loop)"
-    )
-    task_context: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Additional context for the overall task"
-    )
-    execution_history: List[Dict[str, Any]] = Field(
+    past_steps: Optional[List[tuple]] = Field(
         default_factory=list,
-        description="History of step executions with results"
+        description="List of (step, result) tuples for completed steps"
     )
-    needs_tools: bool = Field(
-        default=False,
-        description="Whether the current step needs tool execution"
-    )
-    plan_state: Optional[Dict[str, Any]] = Field(
+    response: Optional[str] = Field(
         default=None,
-        description="Frontend-formatted plan state for UI rendering"
+        description="Final response when task is complete"
     )
