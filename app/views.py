@@ -211,7 +211,7 @@ async def agui_langgraph_handler(request):
     Accepts RunAgentInput and streams AG-UI protocol events via SSE.
     """
     try:
-        agent = LangGraphAGUIAgent(name="mcpAssistant", description="Agent for mcp's", graph=plan_and_execute_graph)
+        agent = LangGraphAGUIAgent(name="mcpAssistant", description="Agent for mcp's", graph=graph)
         
         # Parse request body
         body_bytes = request.body
