@@ -7,6 +7,7 @@ and improve maintainability.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List
 from pydantic.v1 import BaseModel
 
@@ -128,6 +129,95 @@ def serialize_tools(tools: List[Any]) -> List[Dict[str, Any]]:
         List of dictionaries with tool information
     """
     return [serialize_tool(tool) for tool in tools]
+
+
+def extract_tool_result(result: Any) -> Dict[str, Any]:
+    """
+    Extract content from FastMCP CallToolResult and format as JSON.
+
+    Handles CallToolResult objects by extracting text content,
+    attempting to parse JSON strings, or returning the result as-is.
+    Converts is_error to success for better API semantics.
+
+    Args:
+        result: The result from FastMCP client.call_tool()
+
+    Returns:
+        JSON-serializable dictionary with extracted content
+    """
+    def _try_parse_json(text: str) -> Any:
+        """Try to parse JSON from a text string, handling embedded JSON."""
+        if not isinstance(text, str):
+            return text
+
+        # Try direct JSON parse first
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Try to find and parse JSON object/array embedded in text
+        try:
+            json_match = re.search(r'[\{\[].*[\}\]]', text, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # Return original text if JSON parsing fails
+        return text
+
+    # If already JSON-compatible type, return as-is
+    if isinstance(result, (dict, list)):
+        return result
+    if isinstance(result, (str, int, float, bool, type(None))):
+        return {"content": result}
+
+    # Check if it's a CallToolResult object (has content attribute)
+    if hasattr(result, 'content') and hasattr(result, 'is_error'):
+        extracted = {
+            "success": not result.is_error,
+        }
+
+        # Extract structured content if available
+        if hasattr(result, 'structured_content') and result.structured_content:
+            extracted["structured_content"] = result.structured_content
+            return extracted
+
+        # Extract data if available
+        if hasattr(result, 'data') and result.data:
+            extracted["data"] = result.data
+            return extracted
+
+        # Extract content from content blocks
+        if hasattr(result, 'content') and result.content:
+            content_list = []
+            for content_item in result.content:
+                # Handle TextContent
+                if hasattr(content_item, 'text'):
+                    text = content_item.text
+                    # Try to parse JSON from the text
+                    parsed = _try_parse_json(text)
+                    content_list.append(parsed)
+                # Handle other content types
+                elif hasattr(content_item, 'type') and hasattr(content_item, '__dict__'):
+                    content_list.append({
+                        "type": getattr(content_item, 'type', None),
+                        "data": str(content_item)
+                    })
+                else:
+                    content_list.append(str(content_item))
+
+            # Return as single item if only one content item
+            if len(content_list) == 1:
+                extracted["content"] = content_list[0]
+            else:
+                extracted["content"] = content_list
+
+            return extracted
+
+    # Fallback: convert to string
+    return {"content": str(result)}
 
 
 def generate_anonymous_session_key(request) -> str:

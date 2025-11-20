@@ -26,7 +26,7 @@ from app.mcp.types import (
     ToolCallResult,
     JSON
 )
-from app.mcp.utils import generate_anonymous_session_key
+from app.mcp.utils import generate_anonymous_session_key, extract_tool_result
 from app.mcp.oauth_helper import initiate_oauth_flow
 from app.mcp.oauth_storage import ClientTokenStorage, SimpleTokenAuth
 from strawberry_django.relay import DjangoListConnection
@@ -294,12 +294,15 @@ class Mutation:
 
                 logging.info(f"[call_mcp_server_tool] Tool {tool_name} executed successfully")
 
+                # Extract and format the result as JSON
+                extracted_result = extract_tool_result(result)
+
                 return ToolCallResult(
                     success=True,
                     message=f"Successfully called tool {tool_name}",
                     tool_name=tool_name,
                     server_name=server_name,
-                    result=result if isinstance(result, (dict, list, str, int, float, bool, type(None))) else str(result)
+                    result=extracted_result
                 )
 
             except Exception as client_error:
