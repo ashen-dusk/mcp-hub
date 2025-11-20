@@ -173,3 +173,13 @@ class DisconnectResult:
     success: bool
     message: str
     server: MCPServerType
+
+@strawberry.type
+class ToolCallResult:
+    """Result from calling a specific MCP server tool."""
+    success: bool
+    message: str
+    tool_name: str
+    server_name: str
+    result: Optional[JSON] = None
+    error: Optional[str] = None

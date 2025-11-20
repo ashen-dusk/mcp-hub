@@ -11,6 +11,7 @@ import logging
 import strawberry
 import strawberry_django
 from strawberry.types import Info
+from fastmcp.client import Client as FastMCPClient
 
 from app.graphql.permissions import IsAuthenticated
 from app.mcp.manager import mcp
@@ -22,13 +23,12 @@ from app.mcp.types import (
     MCPServerOrder,
     ConnectionResult,
     DisconnectResult,
+    ToolCallResult,
     JSON
 )
 from app.mcp.utils import generate_anonymous_session_key
 from app.mcp.oauth_helper import initiate_oauth_flow
-from app.mcp.oauth_storage import ClientTokenStorage
-from app.mcp.types import MCPServerType, MCPServerFilter, MCPServerOrder
-from app.mcp.models import MCPServer
+from app.mcp.oauth_storage import ClientTokenStorage, SimpleTokenAuth
 from strawberry_django.relay import DjangoListConnection
 
 def _get_user_context(info: Info) -> str:
@@ -235,6 +235,100 @@ class Mutation:
             message=message,
             server=server,
         )
+
+    @strawberry.mutation
+    async def call_mcp_server_tool(
+        self,
+        info: Info,
+        server_name: str,
+        tool_name: str,
+        tool_input: JSON
+    ) -> ToolCallResult:
+        """
+        Call a specific tool from an MCP server using FastMCP client.
+
+        This directly calls the tool without pre-fetching the tools list,
+        making it more efficient for direct tool execution.
+
+        Args:
+            server_name: Name of the MCP server
+            tool_name: Name of the tool to call
+            tool_input: Input arguments for the tool as JSON/dict
+
+        Returns:
+            ToolCallResult with success status, result or error
+        """
+        session_key = _get_user_context(info)
+        user = info.context.request.user
+        user_id = user.username if user and not isinstance(user, AnonymousUser) and user.is_authenticated else None
+
+        try:
+            # Get the server configuration from database
+            server = await MCPServer.objects.aget(name=server_name)
+
+            if not server.url:
+                return ToolCallResult(
+                    success=False,
+                    message=f"Server {server_name} does not have a URL configured",
+                    tool_name=tool_name,
+                    server_name=server_name,
+                    error="Server URL not configured"
+                )
+
+            logging.info(f"[call_mcp_server_tool] Calling tool {tool_name} on server {server_name}")
+
+            # Create FastMCP client with optional OAuth
+            try:
+                if server.requires_oauth2:
+                    # Use SimpleTokenAuth to load existing tokens
+                    auth = SimpleTokenAuth(
+                        server_url=server.url,
+                        user_id=user_id,
+                        session_id=session_key,
+                    )
+                    async with FastMCPClient(server.url, auth=auth) as client:
+                        result = await client.call_tool(tool_name, tool_input)
+                else:
+                    async with FastMCPClient(server.url) as client:
+                        result = await client.call_tool(tool_name, tool_input)
+
+                logging.info(f"[call_mcp_server_tool] Tool {tool_name} executed successfully")
+
+                return ToolCallResult(
+                    success=True,
+                    message=f"Successfully called tool {tool_name}",
+                    tool_name=tool_name,
+                    server_name=server_name,
+                    result=result if isinstance(result, (dict, list, str, int, float, bool, type(None))) else str(result)
+                )
+
+            except Exception as client_error:
+                logging.exception(f"[call_mcp_server_tool] FastMCP client error: {client_error}")
+                return ToolCallResult(
+                    success=False,
+                    message=f"Error calling tool {tool_name}",
+                    tool_name=tool_name,
+                    server_name=server_name,
+                    error=str(client_error)
+                )
+
+        except MCPServer.DoesNotExist:
+            return ToolCallResult(
+                success=False,
+                message=f"Server {server_name} not found",
+                tool_name=tool_name,
+                server_name=server_name,
+                error=f"Server '{server_name}' does not exist"
+            )
+        except Exception as e:
+            logging.exception(f"[call_mcp_server_tool] Unexpected error: {e}")
+            return ToolCallResult(
+                success=False,
+                message=f"Error calling tool {tool_name}",
+                tool_name=tool_name,
+                server_name=server_name,
+                error=str(e)
+            )
 
     @strawberry.mutation
     async def restart_mcp_server(self, info: Info, name: str) -> ConnectionResult:
