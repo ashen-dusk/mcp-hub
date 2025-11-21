@@ -13,6 +13,7 @@ dependencies = [
     "django-svelte-jsoneditor>=0.4.4",
     "fastmcp>=2.12.4",
     "google-auth>=2.41.1",
+    "langchain-anthropic>=0.3.19",
     "langchain-deepseek>=0.1.4",
     "langchain-mcp-adapters>=0.1.11",
     "langchain-openai>=0.3.35",
