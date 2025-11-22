@@ -92,12 +92,12 @@ class Mutation:
         args: Optional[JSON] = None, headers: Optional[JSON] = None,
         query_params: Optional[JSON] = None, requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False, description: Optional[str] = None,
-        category_id: Optional[str] = None,
+        category_ids: Optional[List[str]] = None,
     ) -> MCPServerType:
         user = info.context.request.user
         return await mcp.asave_server(
             name, transport, user, url, command, args, headers, query_params,
-            requires_oauth2, is_public=is_public, description=description, category_id=category_id
+            requires_oauth2, is_public=is_public, description=description, category_ids=category_ids
         )
         
     @strawberry.mutation(permission_classes=[IsAuthenticated])

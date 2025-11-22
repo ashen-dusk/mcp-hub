@@ -62,13 +62,11 @@ class MCPServer(models.Model):
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True, help_text="Description of what this server does")
-    category = models.ForeignKey(
+    categories = models.ManyToManyField(
         Category,
-        on_delete=models.SET_NULL,
-        null=True,
         blank=True,
         related_name='servers',
-        help_text="Category this server belongs to"
+        help_text="Categories this server belongs to"
     )
     transport = models.CharField(max_length=32, choices=TRANSPORT_CHOICES)
     url = models.TextField(blank=True, null=True)

@@ -29,11 +29,18 @@ class MCPServerAdminForm(forms.ModelForm):
 @admin.register(MCPServer)
 class MCPServerAdmin(admin.ModelAdmin):
     form = MCPServerAdminForm
-    list_display = ("name", "category", "transport", "enabled", "owner", "is_public", "updated_at")
+    list_display = ("name", "get_categories", "transport", "enabled", "owner", "is_public", "updated_at")
     search_fields = ("name", "transport", "description")
-    list_filter = ("category", "transport", "enabled", "connection_status", "is_public")
+    list_filter = ("categories", "transport", "enabled", "is_public")
     readonly_fields = ("id", "created_at", "updated_at")
-    autocomplete_fields = ("category",)
+    autocomplete_fields = ("categories",)
+    filter_horizontal = ("categories",)  # Nice UI for ManyToMany in admin
+    exclude = ("connection_status", "tools")  # Exclude Redis-managed fields
+
+    def get_categories(self, obj):
+        """Display categories as comma-separated list"""
+        return ", ".join([cat.name for cat in obj.categories.all()])
+    get_categories.short_description = "Categories"
 
 
 @admin.register(Assistant)

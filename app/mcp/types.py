@@ -59,7 +59,7 @@ class MCPServerFilter:
     requires_oauth2: auto
     connection_status: auto
     is_public: auto
-    category: Optional[CategoryFilter]
+    categories: Optional[CategoryFilter]
 
 @strawberry_django.order_type(MCPServer)
 class MCPServerOrder:
@@ -83,13 +83,12 @@ class MCPServerType(Node):
     is_public: bool
 
     @strawberry_django.field
-    async def category(self, root: MCPServer) -> Optional[CategoryType]:
-        """Get the category for this server."""
+    async def categories(self, root: MCPServer) -> List[CategoryType]:
+        """Get all categories for this server."""
         @sync_to_async
-        def get_category():
-            return root.category
-        category = await get_category()
-        return category
+        def get_categories():
+            return list(root.categories.all())
+        return await get_categories()
 
     @strawberry.field
     async def owner(self, root: MCPServer) -> Optional[str]:

@@ -140,7 +140,7 @@ class MCPServerManager:
         requires_oauth2: Optional[bool] = False,
         is_public: Optional[bool] = False,
         description: Optional[str] = None,
-        category_id: Optional[str] = None,
+        category_ids: Optional[List[str]] = None,
     ) -> MCPServer:
         """
         Create or update an MCP server configuration.
@@ -157,7 +157,7 @@ class MCPServerManager:
             requires_oauth2: Whether OAuth2 is required
             is_public: Whether server is publicly available
             description: Description of what this server does
-            category_id: Optional category ID to assign to this server
+            category_ids: Optional list of category IDs to assign to this server
 
         Returns:
             Created or updated MCPServer instance
@@ -174,20 +174,32 @@ class MCPServerManager:
             "is_public": is_public,
             "description": description,
         }
-
-        # Add category if provided
-        if category_id is not None:
-            try:
-                category = await Category.objects.aget(pk=category_id)
-                defaults["category"] = category
-            except Category.DoesNotExist:
-                pass  # Ignore invalid category_id
-
         rec, _ = await MCPServer.objects.aupdate_or_create(
             name=name,
             owner=owner,
             defaults=defaults,
         )
+
+        # Handle categories assignment (ManyToMany field must be set after save)
+        if category_ids is not None:
+            # Validate all category IDs exist
+            categories = []
+            for cat_id in category_ids:
+                try:
+                    category = await Category.objects.aget(pk=cat_id)
+                    categories.append(category)
+                except Category.DoesNotExist:
+                    raise ValueError(f"Category with ID '{cat_id}' does not exist")
+
+            # aset() handles everything: adds new, removes old, clears if empty list
+            await rec.categories.aset(categories)
+
+            if categories:
+                category_names = [cat.name for cat in categories]
+                logging.info(f"Server '{name}' saved with categories: {', '.join(category_names)}")
+            else:
+                logging.info(f"Cleared all categories for server '{name}'")
+
         await self.initialize_client()  # Refresh global client if needed
         return rec
 

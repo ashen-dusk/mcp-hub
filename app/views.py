@@ -93,24 +93,28 @@ async def oauth_callback(request):
 
         logging.info(f"[OAuth Callback] Processing OAuth for server: {server_name}, session: {session_id}")
 
-        # Trigger background task to complete OAuth flow
-        # We do this in background so we can immediately redirect the user
-        asyncio.create_task(
-            handle_token_exchange(
-                server_name=server_name,
-                session_id=session_id,
-                user_id=user_id,
-                code=code,
-                state=state
-            )
+        # Complete OAuth flow and wait for result
+        success = await handle_token_exchange(
+            server_name=server_name,
+            session_id=session_id,
+            user_id=user_id,
+            code=code,
+            state=state
         )
 
-        # Redirect to frontend MCP page
-        success_params = urlencode({
-            'server': server_name,
-            'step': 'success'
-        })
-        redirect_url = f"{frontend_url}/mcp?{success_params}"
+        # Redirect to frontend MCP page based on result
+        if success:
+            redirect_params = urlencode({
+                'server': server_name,
+                'step': 'success'
+            })
+        else:
+            redirect_params = urlencode({
+                'server': server_name,
+                'step': 'failed'
+            })
+
+        redirect_url = f"{frontend_url}/mcp?{redirect_params}"
 
         logging.info(f"[OAuth Callback] Redirecting to: {redirect_url}")
 
@@ -129,9 +133,9 @@ async def handle_token_exchange(
     user_id: str,
     code: str,
     state: str
-):
+) -> bool:
     """
-    Complete the OAuth flow in background.
+    Complete the OAuth flow and return success status.
 
     This function:
     1. Exchanges authorization code for access tokens
@@ -139,9 +143,12 @@ async def handle_token_exchange(
     3. Connects to MCP server
     4. Fetches tools
     5. Updates Redis with connection status
+
+    Returns:
+        True if OAuth and connection successful, False otherwise
     """
     try:
-        logging.info(f"[OAuth Flow] Starting background OAuth completion for server: {server_name}")
+        logging.info(f"[OAuth Flow] Starting OAuth completion for server: {server_name}")
 
         # Get server from database
         try:
@@ -154,12 +161,13 @@ async def handle_token_exchange(
                 [],
                 session_id
             )
-            return
+            return False
 
         # Step 1: Exchange authorization code for tokens
         success, message = await exchange_authorization_code(
             server=server,
             code=code,
+            state=state,
             session_id=session_id,
             user_id=user_id
         )
@@ -172,7 +180,7 @@ async def handle_token_exchange(
                 [],
                 session_id
             )
-            return
+            return False
 
         logging.info(f"[OAuth Flow] ✅ Tokens exchanged successfully")
 
@@ -185,8 +193,10 @@ async def handle_token_exchange(
         if success:
             logging.info(f"[OAuth Flow] ✅ Successfully connected to {server_name}")
             logging.info(f"[OAuth Flow] Fetched {len(connected_server.tools) if connected_server else 0} tools")
+            return True
         else:
             logging.error(f"[OAuth Flow] ❌ Failed to connect to {server_name}: {message}")
+            return False
 
     except Exception as e:
         logging.exception(f"[OAuth Flow] Error completing OAuth flow for {server_name}: {e}")
@@ -196,6 +206,7 @@ async def handle_token_exchange(
             [],
             session_id
         )
+        return False
 
 # ============================================================================
 # Django View Handler
