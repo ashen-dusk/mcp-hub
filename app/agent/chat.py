@@ -38,16 +38,7 @@ async def get_tools_from_config(
     mcp_config: Optional[dict] = None,
     selected_tools: Optional[List[str]] = None
 ) -> List[Any]:
-    """
-    Get tools from MCP config using MultiServerMCPClient.
 
-    Args:
-        mcp_config: Dict of server configs for MultiServerMCPClient
-        selected_tools: Optional list of tool names to filter
-
-    Returns:
-        List of tool objects
-    """
     tools_list = [get_system_info]
 
     if not mcp_config:
@@ -55,22 +46,21 @@ async def get_tools_from_config(
         return tools_list
 
     try:
-        # Use MultiServerMCPClient with the config
-        async with MultiServerMCPClient(mcp_config) as mcp_client:
-            # Get all tools from MCP servers
-            mcp_tools = mcp_client.get_tools()
+        client = MultiServerMCPClient(mcp_config)
 
-            # Filter by selected tools if specified
-            if selected_tools:
-                mcp_tools = [
-                    tool for tool in mcp_tools
-                    if getattr(tool, 'name', '') in selected_tools
-                ]
-                logging.info(f"Filtered to {len(mcp_tools)} selected tools")
+        # ✅ MUST await this
+        mcp_tools = await client.get_tools()
 
-            if mcp_tools:
-                tools_list.extend(mcp_tools)
-                logging.info(f"Loaded {len(mcp_tools)} MCP tools from config")
+        if selected_tools:
+            mcp_tools = [
+                tool for tool in mcp_tools
+                if getattr(tool, 'name', '') in selected_tools
+            ]
+            logging.info(f"Filtered to {len(mcp_tools)} selected tools")
+
+        if mcp_tools:
+            tools_list.extend(mcp_tools)
+            logging.info(f"Loaded {len(mcp_tools)} MCP tools from config")
 
     except Exception as e:
         logging.exception(f"Error loading MCP tools from config: {e}")
