@@ -15,6 +15,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
     Returns the appropriate chat model based on the agent's state.
     Supports OpenAI, DeepSeek, and OpenRouter models.
     Extracts temperature and max_tokens from assistant config in state.
+    Uses API key from state if provided, otherwise falls back to environment variables.
     """
     model_name = state.get("model", "deepseek")
 
@@ -24,15 +25,20 @@ def get_llm(state: AgentState) -> BaseChatModel:
     temperature = assistant_config.get("temperature", 0)  # default 0
     max_tokens = assistant_config.get("max_tokens")  # can be None
 
-    print(f"Model: {model_name}, Temperature: {temperature}, Max Tokens: {max_tokens}")
+    # Get LLM provider and API key from state (user-provided)
+    llm_provider = state.get("llm_provider")
+    user_api_key = state.get("llm_api_key")
+
+    print(f"Model: {model_name}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
 
     # Handle OpenRouter models first (detected by :free suffix)
     if ":free" in model_name:
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        # Use user-provided API key or fallback to environment variable
+        api_key = user_api_key if user_api_key else os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ValueError(
-                "OPENROUTER_API_KEY environment variable is not set. "
-                "Please set it in your .env file or environment variables."
+                "OpenRouter API key not provided. "
+                "Please configure it in LLM settings or set OPENROUTER_API_KEY environment variable."
             )
 
         # Build model kwargs
@@ -53,12 +59,13 @@ def get_llm(state: AgentState) -> BaseChatModel:
         return ChatOpenAI(**model_kwargs)
 
     # Handle DeepSeek models
-    if model_name.startswith("deepseek"):
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if model_name.startswith("deepseek") or llm_provider == "deepseek":
+        # Use user-provided API key or fallback to environment variable
+        api_key = user_api_key if user_api_key else os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError(
-                "DEEPSEEK_API_KEY environment variable is not set. "
-                "Please set it in your .env file or environment variables."
+                "DeepSeek API key not provided. "
+                "Please configure it in LLM settings or set DEEPSEEK_API_KEY environment variable."
             )
 
         # Build model kwargs
@@ -75,11 +82,12 @@ def get_llm(state: AgentState) -> BaseChatModel:
 
     # Handle OpenAI models (default)
     print(f"else block: {model_name}")
-    api_key = os.environ.get("OPENAI_API_KEY")
+    # Use user-provided API key or fallback to environment variable
+    api_key = user_api_key if user_api_key else os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
-            "OPENAI_API_KEY environment variable is not set. "
-            "Please set it in your .env file or environment variables."
+            "OpenAI API key not provided. "
+            "Please configure it in LLM settings or set OPENAI_API_KEY environment variable."
         )
 
     # Build model kwargs

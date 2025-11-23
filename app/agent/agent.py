@@ -4,7 +4,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt
 from app.agent.types import AgentState
-from app.agent.chat import chat_node, get_tools
+from app.agent.chat import chat_node, get_tools_from_config
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 from langchain_core.messages import ToolMessage
@@ -12,8 +12,9 @@ from typing import cast
 import json
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
-    sessionId = state.get("sessionId", None)
-    tools = await get_tools(sessionId=sessionId)
+    mcp_config = state.get("mcp_config", None)
+    selected_tools = state.get("selectedTools", None)
+    tools = await get_tools_from_config(mcp_config=mcp_config, selected_tools=selected_tools)
     messages = state.get("messages", [])
 
     # Get current tool call info

@@ -56,16 +56,24 @@ class AgentState(CopilotKitState):
     approval_response: Optional[Dict[str, Any]] = None
     current_tool_call: Optional[Dict[str, Any]] = None
 
+    # MCP configuration (dict format for MultiServerMCPClient)
+    mcp_config: Optional[Dict[str, Any]] = None
+    # Selected tool names to filter
+    selectedTools: Optional[List[str]] = None
+    # LLM provider configuration
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+
     # Plan-and-Execute fields (simplified following LangGraph tutorial pattern)
-    plan: Optional[List[str]] = Field(
-        default=None,
-        description="List of remaining step descriptions to execute"
-    )
-    past_steps: Optional[List[tuple]] = Field(
-        default_factory=list,
-        description="List of (step, result) tuples for completed steps"
-    )
-    response: Optional[str] = Field(
-        default=None,
-        description="Final response when task is complete"
-    )
+    # plan: Optional[List[str]] = Field(
+    #     default=None,
+    #     description="List of remaining step descriptions to execute"
+    # )
+    # past_steps: Optional[List[tuple]] = Field(
+    #     default_factory=list,
+    #     description="List of (step, result) tuples for completed steps"
+    # )
+    # response: Optional[str] = Field(
+    #     default=None,
+    #     description="Final response when task is complete"
+    # )

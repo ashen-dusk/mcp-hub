@@ -24,7 +24,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 
 from app.agent.types import AgentState
-from app.agent.chat import get_tools
+from app.agent.chat import get_tools_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
     logger.info(f"Executing: {current_step}")
 
     # Get tools
-    tools = await get_tools(sessionId=sessionId)
+    tools = await get_tools_from_config(sessionId=sessionId)
 
     # Build context from past steps
     context = ""

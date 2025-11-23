@@ -1,17 +1,17 @@
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, List, Any
 from datetime import datetime, timezone, timedelta
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
-from app.mcp.manager import mcp
 import platform
 
 @tool
@@ -32,17 +32,48 @@ def search_web(query: str) -> str:
 def get_system_info() -> str:
     """Return basic information about the system environment."""
     return f"{platform.system()} {platform.release()} ({platform.processor()})"
-    
-async def get_tools(sessionId: Optional[str]=None):
+
+
+async def get_tools_from_config(
+    mcp_config: Optional[dict] = None,
+    selected_tools: Optional[List[str]] = None
+) -> List[Any]:
+    """
+    Get tools from MCP config using MultiServerMCPClient.
+
+    Args:
+        mcp_config: Dict of server configs for MultiServerMCPClient
+        selected_tools: Optional list of tool names to filter
+
+    Returns:
+        List of tool objects
+    """
     tools_list = [get_system_info]
-    # sessionId = 'html78910'
-    # get tools from MCP manager scoped to user/session
+
+    if not mcp_config:
+        logging.info("No MCP config provided, returning system tools only")
+        return tools_list
+
     try:
-        mcp_tools = await mcp.aget_tools(session_id=sessionId)
-        if mcp_tools:
-            tools_list.extend(mcp_tools)
+        # Use MultiServerMCPClient with the config
+        async with MultiServerMCPClient(mcp_config) as mcp_client:
+            # Get all tools from MCP servers
+            mcp_tools = mcp_client.get_tools()
+
+            # Filter by selected tools if specified
+            if selected_tools:
+                mcp_tools = [
+                    tool for tool in mcp_tools
+                    if getattr(tool, 'name', '') in selected_tools
+                ]
+                logging.info(f"Filtered to {len(mcp_tools)} selected tools")
+
+            if mcp_tools:
+                tools_list.extend(mcp_tools)
+                logging.info(f"Loaded {len(mcp_tools)} MCP tools from config")
+
     except Exception as e:
-        logging.exception(f"Error fetching scoped MCP tools: {e}")
+        logging.exception(f"Error loading MCP tools from config: {e}")
 
     return tools_list
 
@@ -50,8 +81,12 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
     sessionId = state.get("sessionId", None)
     assistant = state.get("assistant", None)
+    mcp_config = state.get("mcp_config", None)
+    selected_tools = state.get("selectedTools", None)
+
     print('chat_node: sessionId in chat_node', sessionId)
-    print(state, 'state in chat_node')
+    print('chat_node: mcp_config', mcp_config)
+    print('chat_node: selectedTools', selected_tools)
 
     # Clear previous tool call state when processing a new user message
     # (not when returning from tool execution)
@@ -59,7 +94,8 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if messages and isinstance(messages[-1], HumanMessage):
         state["current_tool_call"] = None
 
-    tools = await get_tools(sessionId=sessionId)
+    # Get tools from MCP config
+    tools = await get_tools_from_config(mcp_config=mcp_config, selected_tools=selected_tools)
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
     datetime_context = assistant_config.get("datetime_context", False)
