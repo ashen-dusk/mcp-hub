@@ -25,16 +25,16 @@ def get_llm(state: AgentState) -> BaseChatModel:
     temperature = assistant_config.get("temperature", 0)  # default 0
     max_tokens = assistant_config.get("max_tokens")  # can be None
 
-    # Get LLM provider and API key from state (user-provided)
-    llm_provider = state.get("llm_provider")
-    user_api_key = state.get("llm_api_key")
+    # Get LLM provider and API key from assistant_config (supports both DB and localStorage)
+    llm_provider = assistant_config.get("llm_provider")
+    llm_api_key = assistant_config.get("llm_api_key")
 
     print(f"Model: {model_name}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
 
     # Handle OpenRouter models first (detected by :free suffix)
     if ":free" in model_name:
         # Use user-provided API key or fallback to environment variable
-        api_key = user_api_key if user_api_key else os.environ.get("OPENROUTER_API_KEY")
+        api_key = llm_api_key if llm_api_key else os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ValueError(
                 "OpenRouter API key not provided. "
@@ -61,7 +61,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
     # Handle DeepSeek models
     if model_name.startswith("deepseek") or llm_provider == "deepseek":
         # Use user-provided API key or fallback to environment variable
-        api_key = user_api_key if user_api_key else os.environ.get("DEEPSEEK_API_KEY")
+        api_key = llm_api_key if llm_api_key else os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
             raise ValueError(
                 "DeepSeek API key not provided. "
@@ -83,7 +83,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
     # Handle OpenAI models (default)
     print(f"else block: {model_name}")
     # Use user-provided API key or fallback to environment variable
-    api_key = user_api_key if user_api_key else os.environ.get("OPENAI_API_KEY")
+    api_key = llm_api_key if llm_api_key else os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
             "OpenAI API key not provided. "
