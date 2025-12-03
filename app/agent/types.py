@@ -1,6 +1,5 @@
 from typing import Any, Optional, Dict, List
 from langgraph.graph import MessagesState
-from copilotkit import CopilotKitState
 from pydantic import BaseModel, Field
 
 
@@ -44,7 +43,7 @@ class Plan(BaseModel):
     )
 
 
-class AgentState(CopilotKitState):
+class AgentState(MessagesState):
     """Conversation state for the agent with plan-and-execute support."""
 
     # Original fields
@@ -63,6 +62,7 @@ class AgentState(CopilotKitState):
     # LLM provider configuration
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
+    tools: Optional[List[Any]] = None
 
     # Plan-and-Execute fields (simplified following LangGraph tutorial pattern)
     # plan: Optional[List[str]] = Field(
