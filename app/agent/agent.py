@@ -5,16 +5,29 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt
 from app.agent.types import AgentState
 from app.agent.chat import chat_node, get_tools_from_config
+from app.agent.utils import get_a2a_agents_from_assistant
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 from langchain_core.messages import ToolMessage
 from typing import cast
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
     mcp_config = state.get("mcp_config", None)
     selected_tools = state.get("selectedTools", None)
-    tools = await get_tools_from_config(mcp_config=mcp_config, selected_tools=selected_tools)
+    assistant = state.get("assistant", None)
+
+    # Extract A2A agents from assistant config
+    a2a_agents = get_a2a_agents_from_assistant(assistant)
+
+    tools = await get_tools_from_config(
+        mcp_config=mcp_config,
+        selected_tools=selected_tools,
+        a2a_agents=a2a_agents
+    )
     messages = state.get("messages", [])
 
     # Get current tool call info
@@ -53,13 +66,7 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
         # User approved - continue with tool execution
         state["approval_response"] = None
 
-    # Update state to show tool is executing
-    # state["current_tool_call"] = {
-    #     "name": tool_name,
-    #     "args": tool_args,
-    #     "status": "executing"
-    # }
-
+    # All tools (including A2A) use standard ToolNode
     tool_node = ToolNode(tools)
     result = await tool_node.ainvoke(state, config)
 
@@ -128,7 +135,7 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
     return state
 
 async def route(state: AgentState, config: RunnableConfig):
-    """Route after the chat node based on tool calls assistant settings."""
+    """Route after the chat node based on tool calls and assistant settings."""
     messages = state.get("messages", [])
 
     if messages and isinstance(messages[-1], AIMessage):
@@ -139,6 +146,7 @@ async def route(state: AgentState, config: RunnableConfig):
         ).get("tool_calls")
 
         if tool_calls:
+
             assistant = state.get("assistant", None)
             assistant_config = assistant.get("config", {}) if assistant else {}
 
@@ -156,10 +164,12 @@ graph_builder = StateGraph(AgentState)
 graph_builder.add_node("chat_node", chat_node)
 graph_builder.add_node("tools", async_tool_node)
 graph_builder.add_node("interrupt_node", interrupt_node)
+
 # edges
 graph_builder.add_edge(START, "chat_node")
 graph_builder.add_edge("interrupt_node", "tools")
 graph_builder.add_edge("tools", "chat_node")
+
 # conditional edges
 graph_builder.add_conditional_edges(
     "chat_node",

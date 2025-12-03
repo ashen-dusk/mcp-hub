@@ -12,6 +12,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from app.agent.types import AgentState
 from app.agent.model import get_llm
+from app.agent.utils import get_a2a_agents_from_assistant, create_a2a_system_prompt
 import platform
 
 @tool
@@ -34,12 +35,75 @@ def get_system_info() -> str:
     return f"{platform.system()} {platform.release()} ({platform.processor()})"
 
 
+@tool
+async def send_message_to_a2a_agent(task: str, agentUrl: str, agentName: str) -> str:
+    """
+    Sends a task to an A2A agent. Please specify the agent URL and agent name.
+    
+    Args:
+        task: The comprehensive conversation-context summary and goal to be achieved regarding the user inquiry.
+        agentUrl: The URL of the A2A agent to communicate with (e.g., http://localhost:9001)
+        agentName: The name of the A2A agent (e.g., "Analysis Agent")
+
+    Returns:
+        Response from the A2A agent
+    """
+    from app.a2a.client import send_a2a_message
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if not task:
+            raise ValueError("Missing required parameter: task")
+        
+        if not agentUrl and not agentName:
+            raise ValueError("Must provide either agentUrl or agentName")
+
+        # Use the URL directly if provided, otherwise we'll need to look it up
+        url_to_use = agentUrl
+        
+        if not url_to_use:
+            # agentName was provided, return error asking for URL
+            raise ValueError(f"Agent name '{agentName}' provided but URL is required. Please use agentUrl parameter with the agent's URL.")
+
+        logger.info(f"Delegating to A2A agent at {url_to_use}")
+        logger.info(f"Task: {task}")
+
+        # Send message to A2A agent using official a2a library
+        response = await send_a2a_message(agent_url=url_to_use, message=task)
+
+        logger.info(f"Received response from A2A agent at {url_to_use}")
+        return response
+
+    except Exception as e:
+        error_msg = f"Error communicating with A2A agent: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+
 async def get_tools_from_config(
     mcp_config: Optional[dict] = None,
-    selected_tools: Optional[List[str]] = None
+    selected_tools: Optional[List[str]] = None,
+    a2a_agents: Optional[List[dict]] = None
 ) -> List[Any]:
+    """
+    Get tools from MCP config and A2A agents.
 
+    Args:
+        mcp_config: MCP server configuration
+        selected_tools: List of tool names to filter
+        a2a_agents: List of A2A agents to enable delegation tool
+
+    Returns:
+        List of tool functions
+    """
     tools_list = [get_system_info]
+
+    # Add A2A tool if agents are available
+    if a2a_agents and len(a2a_agents) > 0:
+        tools_list.append(send_message_to_a2a_agent)
+        logging.info(f"Added A2A delegation tool for {len(a2a_agents)} agents")
 
     if not mcp_config:
         logging.info("No MCP config provided, returning system tools only")
@@ -73,10 +137,13 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     assistant = state.get("assistant", None)
     mcp_config = state.get("mcp_config", None)
     selected_tools = state.get("selectedTools", None)
+    # Extract A2A agents from assistant config
+    a2a_agents = get_a2a_agents_from_assistant(assistant)
 
     print('chat_node: sessionId in chat_node', sessionId)
     print('chat_node: mcp_config', mcp_config)
     print('chat_node: selectedTools', selected_tools)
+    print('chat_node: a2a_agents from assistant config', a2a_agents)
 
     # Clear previous tool call state when processing a new user message
     # (not when returning from tool execution)
@@ -84,8 +151,12 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if messages and isinstance(messages[-1], HumanMessage):
         state["current_tool_call"] = None
 
-    # Get tools from MCP config
-    tools = await get_tools_from_config(mcp_config=mcp_config, selected_tools=selected_tools)
+    # Get tools from MCP config and A2A agents
+    tools = await get_tools_from_config(
+        mcp_config=mcp_config,
+        selected_tools=selected_tools,
+        a2a_agents=a2a_agents
+    )
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
     datetime_context = assistant_config.get("datetime_context", False)
@@ -106,17 +177,23 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         """
         base_system_message = datetime_str.strip() + "\n\n" + base_system_message
 
-    # Add assistant-specific instructions
-    if assistant and assistant.get("instructions"):
-        system_message = f"""{base_system_message}
-
-        # Custom Assistant Instructions
-        {assistant.get("instructions")}
-        
-        Follow the custom instructions above while helping the user.
-        """
+    # Use A2A system prompt if A2A agents are available
+    if a2a_agents and len(a2a_agents) > 0:
+        # Get assistant instructions to pass to A2A system prompt
+        assistant_instructions = assistant.get("instructions") if assistant else None
+        system_message = create_a2a_system_prompt(a2a_agents, assistant_instructions)
     else:
-        system_message = base_system_message
+        # Use standard system message for non-A2A assistants
+        if assistant and assistant.get("instructions"):
+            system_message = f"""{base_system_message}
+
+# Custom Assistant Instructions
+{assistant.get("instructions")}
+
+Follow the custom instructions above while helping the user.
+"""
+        else:
+            system_message = base_system_message
 
     response = await llm_with_tools.ainvoke(
         [
