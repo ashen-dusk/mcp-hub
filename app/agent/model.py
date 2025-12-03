@@ -17,7 +17,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
     Extracts temperature and max_tokens from assistant config in state.
     Uses API key from state if provided, otherwise falls back to environment variables.
     """
-    model_name = state.get("model", "deepseek")
+    model_name = state.get("model", "gpt-4o-mini")
 
     # Extract temperature and max_tokens from assistant config
     assistant = state.get("assistant", {})

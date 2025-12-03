@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 from django.utils.timezone import now
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse, HttpResponseRedirect
 from django.views.decorators.csrf import csrf_exempt
-from ag_ui_langgraph.agent import LangGraphAgent
 from ag_ui.encoder import EventEncoder
 from ag_ui.core import RunAgentInput
 from app.agent.agent import graph
@@ -15,12 +14,11 @@ from app.mcp.redis_manager import mcp_redis
 from app.mcp.models import MCPServer
 from app.mcp.manager import mcp
 from app.mcp.oauth_helper import exchange_authorization_code
-from copilotkit import LangGraphAGUIAgent
 from app.agent.plan_and_execute import plan_and_execute_graph
 from app.agent.agent import graph
 from django.conf import settings
+from ag_ui_langgraph.agent import LangGraphAgent
 
-# from ag_ui_langgraph.agent import LangGraphAgent
 def home(request):
     return HttpResponse("MCP Hub is running 🚀")
 
@@ -222,7 +220,7 @@ async def agui_langgraph_handler(request):
     Accepts RunAgentInput and streams AG-UI protocol events via SSE.
     """
     try:
-        agent = LangGraphAGUIAgent(name="mcpAssistant", description="Agent for mcp's", graph=graph)
+        agent = LangGraphAgent(name="mcpAssistant", description="Agent for mcp's", graph=graph)
         
         # Parse request body
         body_bytes = request.body
@@ -231,7 +229,7 @@ async def agui_langgraph_handler(request):
 
         # Validate input with Pydantic
         input_data = RunAgentInput(**body)
-
+        print(f"Input data: {input_data}")
         # Create async generator for streaming
         async def event_generator():
             # Pass only input_data (agent.run takes only 1 argument besides self)
