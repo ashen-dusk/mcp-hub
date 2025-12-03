@@ -11,7 +11,19 @@ class Assistant(models.Model):
     """
     Represents a user's personalized AI assistant with custom instructions.
     Similar to ChatGPT/Claude custom instructions - users can customize their assistant's behavior.
+
+    Supports three role-based types:
+    - 'orchestrator': Main coordinator assistant that manages tasks and delegates to specialists
+    - 'specialist': Domain-specific agents (research, analysis, coding, etc.) via A2A protocol
+    - 'tool_agent': Agents that provide specific tools/capabilities
     """
+
+    ASSISTANT_TYPE_CHOICES = [
+        ('orchestrator', 'Orchestrator'),
+        ('specialist', 'Specialist Agent'),
+        ('custom', 'Custom'),
+    ]
+
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     user = models.ForeignKey(
         User,
@@ -20,6 +32,12 @@ class Assistant(models.Model):
         null=True,  # Temporarily nullable for migration
         blank=True,
         help_text="The user who owns this assistant"
+    )
+    assistant_type = models.CharField(
+        max_length=20,
+        choices=ASSISTANT_TYPE_CHOICES,
+        default='specialist',
+        help_text="Role of the assistant: orchestrator (main coordinator), specialist (domain expert), or tool_agent (tool provider)"
     )
     name = models.CharField(max_length=100, default="My Assistant")  # Display name, user can change anytime
     description = models.TextField(blank=True, null=True)  # Optional description
@@ -33,6 +51,8 @@ class Assistant(models.Model):
         help_text="Whether this assistant is currently active. Only one assistant can be active per user."
     )
     # optional assistant-specific config (model preferences, etc.)
+    # For A2A agents (specialist/tool_agent), config stores:
+    # { "a2a_url": "http://localhost:9001", "skills": ["research", "analysis"], "agent_card": {...} }
     config = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

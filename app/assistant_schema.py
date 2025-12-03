@@ -19,6 +19,7 @@ from app.models import Assistant
 class AssistantType:
     """GraphQL type for Assistant model."""
     id: strawberry.ID
+    assistant_type: str
     name: str
     description: Optional[str]
     instructions: str
@@ -76,6 +77,7 @@ class Mutation:
         info: Info,
         name: str,
         instructions: str,
+        assistant_type: str = "orchestrator",
         description: Optional[str] = None,
         config: Optional[strawberry.scalars.JSON] = None,
         is_active: bool = False,
@@ -86,14 +88,16 @@ class Mutation:
         Args:
             name: Display name for the assistant
             instructions: Custom instructions to control assistant behavior
+            assistant_type: Type of assistant (orchestrator, specialist, tool_agent)
             description: Optional description
-            config: Optional JSON configuration
+            config: Optional JSON configuration (for A2A agents: { "a2a_url": "http://...", "skills": [...] })
             is_active: Whether this assistant should be active (only one can be active per user)
         """
         user: User = info.context.request.user
         assistant = await Assistant.objects.acreate(
             user=user,
             name=name,
+            assistant_type=assistant_type,
             instructions=instructions,
             description=description,
             config=config or {},
@@ -107,6 +111,7 @@ class Mutation:
         info: Info,
         id: strawberry.ID,
         name: Optional[str] = None,
+        assistant_type: Optional[str] = None,
         instructions: Optional[str] = None,
         description: Optional[str] = None,
         config: Optional[strawberry.scalars.JSON] = None,
@@ -123,6 +128,8 @@ class Mutation:
 
             if name is not None:
                 assistant.name = name
+            if assistant_type is not None:
+                assistant.assistant_type = assistant_type
             if instructions is not None:
                 assistant.instructions = instructions
             if description is not None:
