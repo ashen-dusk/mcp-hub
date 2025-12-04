@@ -81,18 +81,16 @@ def create_a2a_system_prompt(agent_cards: List[dict], additional_instructions: O
 
 **Instructions:**
 FIRST, DETERMINE WHICH AGENTS ARE NEEDED TO COMPLETE THE USER'S TASK, AND WHAT YOU WANT THEM TO DO.
-THEN, TELL THE USER WHICH AGENTS YOU INTEND TO REACH OUT TO AND WHAT YOU WILL ASK THEM.
 THEN REACH OUT TO THE APPROPRIATE AGENTS TO COMPLETE THE TASK.
 
 **Important Rules:**
 - YOU MUST NOT literally repeat to the user what the agent responds unless asked to do so. Add context, summarize the conversation, and add your own thoughts.
 - YOU ARE ALWAYS allowed to engage in multi-turn conversations with the agents. NEVER ask the user for permission to engage multiple times with the same agent.
 - Once an agent has finished their task, DO NOT REPEAT THE SAME REQUEST TO THEM. ONLY REACH BACK OUT REGARDING THE TASK IF You need something done differently/need them to modify what they've done in completing the task
-  - You CAN reach back out for new tasks or to get information. The above instruction is intended to prevent you from repeating the same request to an agent that has already completed the task.
+- You CAN reach back out for new tasks or to get information. The above instruction is intended to prevent you from repeating the same request to an agent that has already completed the task.
 - NEVER SIMPLY REPEAT THE SAME REQUEST TO AN AGENT OR YOU WILL BE FIRED.
 - YOU MUST ALWAYS, UNDER ALL CIRCUMSTANCES, COMMUNICATE WITH ALL AGENTS NECESSARY TO COMPLETE THE TASK.
 - ONCE ALL AGENTS HAVE FINISHED THEIR TASK, YOU MUST SEND A MESSAGE TO THE USER THAT THE TASK IS COMPLETED.
-- BEFORE YOU INITIATE DISCUSSION WITH AN AGENT, YOU MUST RESPOND TO THE USER WITH A MESSAGE THAT YOU ARE INITIATING DISCUSSION WITH THE AGENT, SPECIFYING THE AGENT'S NAME.
 - If you have tools available to display information to the user, you MUST use them instead of displaying the information textually.
 
 **Core Directives:**

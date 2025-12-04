@@ -1,10 +1,10 @@
 
 import os
 import logging
-from typing import Optional, List, Any
+from typing import Optional, List, Any, cast
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
@@ -14,6 +14,9 @@ from app.agent.types import AgentState
 from app.agent.model import get_llm
 from app.agent.utils import get_a2a_agents_from_assistant, create_a2a_system_prompt
 import platform
+from app.a2a.client import send_a2a_message
+import logging
+logger = logging.getLogger(__name__)
 
 @tool
 def get_current_datetime() -> str:
@@ -48,11 +51,7 @@ async def send_message_to_a2a_agent(task: str, agentUrl: str, agentName: str) ->
     Returns:
         Response from the A2A agent
     """
-    from app.a2a.client import send_a2a_message
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
+
     try:
         if not task:
             raise ValueError("Missing required parameter: task")
@@ -203,6 +202,22 @@ Follow the custom instructions above while helping the user.
         config=config,
     )
     print(response, "response in chat_node")
+
+    # ai_message = cast(ToolMessage, response)
+    tool_calls = getattr(response, "tool_calls", [])
+    print(tool_calls, "tool_calls in chat_node")
+
+    if tool_calls:
+        tool_call = tool_calls[0]
+        print(tool_call, "tool_call in chat_node")
+        # only keep the tool call if it is send_message_to_a2a_agent
+        if tool_call.get("name") == "send_message_to_a2a_agent":
+            state["current_tool_call"] = {
+                "name": tool_call.get("name"),
+                "args": tool_call.get("args"),
+                "status": "executing"
+            }
+            
     return {
         **state,
         "messages": [*state["messages"], response],

@@ -135,22 +135,44 @@ async def send_a2a_message(
         # Extract response data
         result = response.root.result
 
-        # Get the response content from artifacts
+        # 1. Check for 'parts' (Message structure)
+        if hasattr(result, 'parts') and result.parts:
+            # Iterate through parts to find text content
+            content_parts = []
+            for part in result.parts:
+                # Check if part has root and text (TextPart)
+                if hasattr(part, 'root'):
+                    if hasattr(part.root, 'text'):
+                        content_parts.append(part.root.text)
+                    elif hasattr(part.root, 'content'):
+                        content_parts.append(part.root.content)
+                # Direct attribute check (fallback)
+                elif hasattr(part, 'text'):
+                    content_parts.append(part.text)
+                elif hasattr(part, 'content'):
+                    content_parts.append(part.content)
+            
+            if content_parts:
+                full_content = "\n".join(content_parts)
+                logger.info(f"Successfully retrieved response from A2A server (via parts)")
+                return full_content
+
+        # 2. Check for 'artifacts' (Legacy/Alternative structure)
         if hasattr(result, 'artifacts') and result.artifacts:
             artifact = result.artifacts[0]
             if hasattr(artifact, 'parts') and artifact.parts:
                 part = artifact.parts[0]
                 if hasattr(part, 'root') and hasattr(part.root, 'text'):
                     content = part.root.text
-                    logger.info(f"Successfully retrieved response from A2A server")
+                    logger.info(f"Successfully retrieved response from A2A server (via artifacts)")
                     return content
 
-        # Fallback: check for content in other locations
+        # 3. Fallback: check for content in other locations
         if hasattr(result, 'content') and result.content:
-            logger.info(f"Successfully retrieved response from A2A server")
+            logger.info(f"Successfully retrieved response from A2A server (via content)")
             return result.content
 
-        logger.warning("No content found in A2A server response")
+        logger.warning(f"No content found in A2A server response. Result keys: {result.__dict__.keys() if hasattr(result, '__dict__') else 'unknown'}")
         return "No response content received from A2A server"
 
     except Exception as e:

@@ -28,11 +28,13 @@ def get_llm(state: AgentState) -> BaseChatModel:
     # Get LLM provider and API key from assistant_config (supports both DB and localStorage)
     llm_provider = assistant_config.get("llm_provider")
     llm_api_key = assistant_config.get("llm_api_key")
+    llm_name = assistant_config.get("llm_name")
+    effective_model = llm_name or model_name
 
-    print(f"Model: {model_name}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
+    print(f"Model: {effective_model}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
 
     # Handle OpenRouter models first (detected by :free suffix)
-    if ":free" in model_name:
+    if ":free" in effective_model:
         # Use user-provided API key or fallback to environment variable
         api_key = llm_api_key if llm_api_key else os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
@@ -43,7 +45,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
 
         # Build model kwargs
         model_kwargs = {
-            "model": model_name,
+            "model": effective_model,
             "api_key": api_key,
             "base_url": "https://openrouter.ai/api/v1",
             "temperature": temperature,
@@ -70,7 +72,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
 
         # Build model kwargs
         model_kwargs = {
-            "model": model_name,
+            "model": effective_model,
             "api_key": api_key,
             "temperature": temperature,
             "streaming": True,
@@ -92,7 +94,8 @@ def get_llm(state: AgentState) -> BaseChatModel:
 
     # Build model kwargs
     model_kwargs = {
-        "model": model_name,
+        "model": effective_model,
+        "reasoning_effort": "medium",
         "api_key": api_key,
         "temperature": temperature,
         "streaming": True,
