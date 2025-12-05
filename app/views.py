@@ -14,8 +14,6 @@ from app.mcp.redis_manager import mcp_redis
 from app.mcp.models import MCPServer
 from app.mcp.manager import mcp
 from app.mcp.oauth_helper import exchange_authorization_code
-from app.agent.plan_and_execute import plan_and_execute_graph
-from app.agent.agent import graph
 from django.conf import settings
 from ag_ui_langgraph.agent import LangGraphAgent
 
@@ -229,7 +227,6 @@ async def agui_langgraph_handler(request):
 
         # Validate input with Pydantic
         input_data = RunAgentInput(**body)
-        print(f"Input data: {input_data}")
         # Create async generator for streaming
         async def event_generator():
             # Pass only input_data (agent.run takes only 1 argument besides self)
