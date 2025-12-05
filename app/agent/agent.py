@@ -18,14 +18,12 @@ logger = logging.getLogger(__name__)
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
 
-    mcp_config = state.get("mcp_config", None)
     mcp_sessions = state.get("mcpSessions", None)
     selected_tools = state.get("selectedTools", None)
     assistant = state.get("assistant", None)
 
-    # Fetch MCP config from sessions if not already provided
-    if not mcp_config and mcp_sessions:
-        mcp_config = await fetch_mcp_config_from_sessions(mcp_sessions)
+    # Fetch MCP config from sessions
+    mcp_config = await fetch_mcp_config_from_sessions(mcp_sessions)
 
     if mcp_config:
         logger.info(f"[tool_node] Using config with {len(mcp_config)} servers")

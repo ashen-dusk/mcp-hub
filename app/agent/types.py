@@ -55,8 +55,6 @@ class AgentState(MessagesState):
     approval_response: Optional[Dict[str, Any]] = None
     current_tool_call: Optional[Dict[str, Any]] = None
 
-    # MCP configuration (dict format for MultiServerMCPClient)
-    mcp_config: Optional[Dict[str, Any]] = None
     # MCP session IDs for fetching server configs from Next.js
     mcpSessions: Optional[List[str]] = None
     # Selected tool names to filter
