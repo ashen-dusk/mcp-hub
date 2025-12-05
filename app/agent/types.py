@@ -57,6 +57,8 @@ class AgentState(MessagesState):
 
     # MCP configuration (dict format for MultiServerMCPClient)
     mcp_config: Optional[Dict[str, Any]] = None
+    # MCP session IDs for fetching server configs from Next.js
+    mcpSessions: Optional[List[str]] = None
     # Selected tool names to filter
     selectedTools: Optional[List[str]] = None
     # LLM provider configuration

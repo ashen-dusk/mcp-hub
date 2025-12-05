@@ -2,12 +2,15 @@
 This module provides a function to get a model based on the configuration.
 """
 import os
+import logging
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 
 from app.agent.types import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def get_llm(state: AgentState) -> BaseChatModel:
@@ -31,7 +34,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
     llm_name = assistant_config.get("llm_name")
     effective_model = llm_name or model_name
 
-    print(f"Model: {effective_model}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
+    logger.info(f"[get_llm] Model: {effective_model}, Provider: {llm_provider}, Temperature: {temperature}, Max Tokens: {max_tokens}")
 
     # Handle OpenRouter models first (detected by :free suffix)
     if ":free" in effective_model:
@@ -83,7 +86,7 @@ def get_llm(state: AgentState) -> BaseChatModel:
         return ChatDeepSeek(**model_kwargs)
 
     # Handle OpenAI models (default)
-    print(f"else block: {model_name}")
+    logger.info(f"[get_llm] Using OpenAI model: {model_name}")
     # Use user-provided API key or fallback to environment variable
     api_key = llm_api_key if llm_api_key else os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -95,7 +98,6 @@ def get_llm(state: AgentState) -> BaseChatModel:
     # Build model kwargs
     model_kwargs = {
         "model": effective_model,
-        "reasoning_effort": "medium",
         "api_key": api_key,
         "temperature": temperature,
         "streaming": True,

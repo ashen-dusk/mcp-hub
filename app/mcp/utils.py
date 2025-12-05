@@ -5,10 +5,13 @@ This module contains reusable utility functions to avoid code duplication
 and improve maintainability.
 """
 
+import os
 import json
 import logging
+import asyncio
+import aiohttp
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pydantic.v1 import BaseModel
 
 
@@ -240,3 +243,80 @@ def generate_anonymous_session_key(request) -> str:
     # Create a unique identifier for this anonymous session
     session_identifier = f"{ip}_{user_agent}_{forwarded_for}"
     return f"anon_{hash(session_identifier)}"
+
+
+async def fetch_mcp_config_from_sessions(mcp_sessions: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+    """
+    Fetch MCP server configurations using server-specific sessionIds.
+
+    This function calls the Next.js API to retrieve server configurations
+    from the session store. Each session ID corresponds to an MCP server
+    connection with authentication tokens stored in Redis.
+
+    Args:
+        mcp_sessions: List of MCP server sessionIds
+
+    Returns:
+        MCP config dict for MultiServerMCPClient, or None if:
+        - No sessions provided
+        - Next.js server is unreachable
+        - API call fails
+        - No server configs returned
+
+    Raises:
+        No exceptions raised - all errors are logged and None is returned
+    """
+    if not mcp_sessions or not isinstance(mcp_sessions, list):
+        logging.info("[fetch_mcp_config] No mcp_sessions provided")
+        logging.info(f"[fetch_mcp_config] mcp_sessions value: {mcp_sessions}")
+        return None
+
+    try:
+        logging.info(f"[fetch_mcp_config] Fetching config for {len(mcp_sessions)} sessions")
+        logging.info(f"[fetch_mcp_config] Session IDs: {mcp_sessions}")
+
+        # Call Next.js API to get server configs from sessionStore
+        nextjs_url = os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
+        api_url = f"{nextjs_url}/api/mcp/server-config"
+
+        logging.info(f"[fetch_mcp_config] Calling Next.js API: {api_url}")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                api_url,
+                json={'sessionIds': mcp_sessions},
+                headers={'Content-Type': 'application/json'},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                response_text = await response.text()
+                logging.info(f"[fetch_mcp_config] Response status: {response.status}")
+                logging.info(f"[fetch_mcp_config] Response body: {response_text[:500]}")  # Log first 500 chars
+
+                if response.status == 200:
+                    try:
+                        # Parse JSON from the already-read response text
+                        data = json.loads(response_text)
+                        logging.info(f"[fetch_mcp_config] Response parsed successfully")
+                    except json.JSONDecodeError as json_error:
+                        logging.error(f"[fetch_mcp_config] Failed to parse JSON: {json_error}")
+                        logging.error(f"[fetch_mcp_config] Invalid JSON response: {response_text}")
+                        return None
+
+                    server_config = data.get('serverConfig', {})
+                    logging.info(f"[fetch_mcp_config] Successfully fetched config for {len(server_config)} servers")
+                    logging.info(f"[fetch_mcp_config] Server config keys: {list(server_config.keys())}")
+                    return server_config if server_config else None
+                else:
+                    logging.error(f"[fetch_mcp_config] Failed to fetch server config: HTTP {response.status}")
+                    logging.error(f"[fetch_mcp_config] Response: {response_text}")
+                    return None
+
+    except aiohttp.ClientConnectionError as e:
+        logging.error(f"[fetch_mcp_config] Connection error - Is Next.js server running? {e}")
+        return None
+    except asyncio.TimeoutError:
+        logging.error(f"[fetch_mcp_config] Request timeout after 10 seconds")
+        return None
+    except Exception as e:
+        logging.exception(f"[fetch_mcp_config] Unexpected error: {e}")
+        return None

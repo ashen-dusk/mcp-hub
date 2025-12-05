@@ -6,6 +6,7 @@ from langgraph.types import interrupt
 from app.agent.types import AgentState
 from app.agent.chat import chat_node, get_tools_from_config
 from app.agent.utils import get_a2a_agents_from_assistant
+from app.mcp.utils import fetch_mcp_config_from_sessions
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 from langchain_core.messages import ToolMessage
@@ -16,9 +17,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 async def async_tool_node(state: AgentState, config: RunnableConfig):
+
     mcp_config = state.get("mcp_config", None)
+    mcp_sessions = state.get("mcpSessions", None)
     selected_tools = state.get("selectedTools", None)
     assistant = state.get("assistant", None)
+
+    # Fetch MCP config from sessions if not already provided
+    if not mcp_config and mcp_sessions:
+        mcp_config = await fetch_mcp_config_from_sessions(mcp_sessions)
+
+    if mcp_config:
+        logger.info(f"[tool_node] Using config with {len(mcp_config)} servers")
 
     # Extract A2A agents from assistant config
     a2a_agents = get_a2a_agents_from_assistant(assistant)
@@ -122,7 +132,7 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
                    # Get current tool call info
             
                    if not approved or action == "CANCEL":
-                        print("User denied tool execution or cancelled.")
+                        logger.info(f"[interrupt_node] User denied tool execution or cancelled")
 
                         state["approval_response"] = approval_response
                    else:   

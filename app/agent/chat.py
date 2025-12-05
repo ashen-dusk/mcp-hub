@@ -1,6 +1,7 @@
 
 import os
 import logging
+import platform
 from typing import Optional, List, Any, cast
 from datetime import datetime, timezone, timedelta
 
@@ -13,9 +14,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from app.agent.types import AgentState
 from app.agent.model import get_llm
 from app.agent.utils import get_a2a_agents_from_assistant, create_a2a_system_prompt
-import platform
 from app.a2a.client import send_a2a_message
-import logging
+from app.mcp.utils import fetch_mcp_config_from_sessions
+
 logger = logging.getLogger(__name__)
 
 @tool
@@ -130,19 +131,30 @@ async def get_tools_from_config(
 
     return tools_list
 
+
+
 async def chat_node(state: AgentState, config: RunnableConfig):
     """Handle chat operations and determine next actions"""
     sessionId = state.get("sessionId", None)
     assistant = state.get("assistant", None)
-    mcp_config = state.get("mcp_config", None)
     selected_tools = state.get("selectedTools", None)
+    mcp_sessions = state.get("mcpSessions", None)
+
+    # Fetch MCP config using server-specific sessionIds
+    mcp_config = await fetch_mcp_config_from_sessions(mcp_sessions)
+
+    if mcp_config:
+        logging.info(f"[chat_node] Using config with {len(mcp_config)} servers")
+    else:
+        logging.info(f"[chat_node] No MCP config available")
+
     # Extract A2A agents from assistant config
     a2a_agents = get_a2a_agents_from_assistant(assistant)
 
-    print('chat_node: sessionId in chat_node', sessionId)
-    print('chat_node: mcp_config', mcp_config)
-    print('chat_node: selectedTools', selected_tools)
-    print('chat_node: a2a_agents from assistant config', a2a_agents)
+    logging.info(f"[chat_node] sessionId: {sessionId}")
+    logging.info(f"[chat_node] mcp_sessions: {mcp_sessions}")
+    logging.info(f"[chat_node] selectedTools: {selected_tools}")
+    logging.info(f"[chat_node] a2a_agents: {a2a_agents}")
 
     # Clear previous tool call state when processing a new user message
     # (not when returning from tool execution)
@@ -201,16 +213,15 @@ Follow the custom instructions above while helping the user.
         ],
         config=config,
     )
-    print(response, "response in chat_node")
+    logging.info(f"[chat_node] LLM response received")
 
-    # ai_message = cast(ToolMessage, response)
     tool_calls = getattr(response, "tool_calls", [])
-    print(tool_calls, "tool_calls in chat_node")
+    logging.info(f"[chat_node] Tool calls: {tool_calls}")
 
     if tool_calls:
         tool_call = tool_calls[0]
-        print(tool_call, "tool_call in chat_node")
-        # only keep the tool call if it is send_message_to_a2a_agent
+        logging.info(f"[chat_node] First tool call: {tool_call.get('name')}")
+        # Only track A2A agent tool calls for approval workflow
         if tool_call.get("name") == "send_message_to_a2a_agent":
             state["current_tool_call"] = {
                 "name": tool_call.get("name"),
