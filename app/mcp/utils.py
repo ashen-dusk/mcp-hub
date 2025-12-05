@@ -279,13 +279,19 @@ async def fetch_mcp_config_from_sessions(mcp_sessions: Optional[List[str]]) -> O
         nextjs_url = os.getenv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
         api_url = f"{nextjs_url}/api/mcp/server-config"
 
+        # Get backend URL for origin header
+        backend_url = os.getenv('BACKEND_URL', 'http://localhost:8000')
+
         logging.info(f"[fetch_mcp_config] Calling Next.js API: {api_url}")
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 api_url,
                 json={'sessionIds': mcp_sessions},
-                headers={'Content-Type': 'application/json'},
+                headers={
+                    'Content-Type': 'application/json',
+                    'Origin': backend_url
+                },
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 response_text = await response.text()
