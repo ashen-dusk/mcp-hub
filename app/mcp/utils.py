@@ -292,7 +292,7 @@ async def fetch_mcp_config_from_sessions(mcp_sessions: Optional[List[str]]) -> O
                     'Content-Type': 'application/json',
                     'Origin': backend_url
                 },
-                timeout=aiohttp.ClientTimeout(total=10)
+                timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 response_text = await response.text()
                 logging.info(f"[fetch_mcp_config] Response status: {response.status}")
