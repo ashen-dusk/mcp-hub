@@ -1,12 +1,13 @@
 
 import logging
 from typing import Optional, List, Any
-from langchain_core.tools import tool
+from langchain.tools import tool, ToolRuntime
 from django.contrib.auth.models import User
 from app.mcp.models import MCPServer
 from asgiref.sync import sync_to_async
 
 import os
+import json
 import platform
 from datetime import datetime, timezone, timedelta
 from langchain_tavily import TavilySearch
@@ -75,90 +76,151 @@ async def send_message_to_a2a_agent(task: str, agentUrl: str, agentName: str) ->
         logger.error(error_msg)
         return error_msg
 
-def get_mcp_management_tools(user_id: Optional[int] = None) -> List[Any]:
+@tool
+async def add_mcp_server(
+    name: str,
+    url: str,
+    transport: str,
+    runtime: ToolRuntime,
+    description: str = "",
+    requires_oauth2: bool = False,
+    is_public: bool = False
+) -> str:
     """
-    Create tools for managing MCP servers with user context.
+    Add a new MCP server to the registry.
     
     Args:
-        user_id: ID of the authenticated user. If None, tools will fail with auth error.
+        name: Name of the server
+        url: URL or command to connect to the server
+        transport: Transport type (sse, websocket, stdio, streamable_http)
+        runtime: ToolRuntime to access state
+        description: Description of the server
+        requires_oauth2: Whether the server requires OAuth2
+        is_public: Whether to make the server public (defaults to False)
     """
-    
-    @tool
-    async def add_mcp_server(
-        name: str,
-        url: str,
-        transport: str,
-        description: str = "",
-        requires_oauth2: bool = False,
-        is_public: bool = False
-    ) -> str:
-        """
-        Add a new MCP server to the registry.
-        
-        Args:
-            name: Name of the server
-            url: URL or command to connect to the server
-            transport: Transport type (sse, websocket, stdio, streamable_http)
-            description: Description of the server
-            requires_oauth2: Whether the server requires OAuth2
-            is_public: Whether to make the server public (defaults to False)
-        """
+    try:
+        user_id = runtime.state.get("user_id")
         if not user_id:
-            return "Error: You must be authenticated to add an MCP server."
-            
-        try:
-            # Check if name is taken by this user
-            exists = await MCPServer.objects.filter(
-                name=name, 
-                owner_id=user_id
-            ).aexists()
-            
-            if exists:
-                return f"Error: You already have a server named '{name}'."
-                
-            # Create the server
-            # Note: sync_to_async needed for some ORM operations if not using async capability fully,
-            # but acreate is available for creation.
-            server = await MCPServer.objects.acreate(
-                name=name,
-                url=url,
-                transport=transport,
-                description=description,
-                requires_oauth2=requires_oauth2,
-                is_public=is_public,
-                owner_id=user_id,
-                enabled=True
-            )
-            
-            return f"Successfully added MCP server '{name}' (ID: {server.id})."
-            
-        except Exception as e:
-            logger.exception(f"Error adding MCP server: {e}")
-            return f"Error adding MCP server: {str(e)}"
+            return json.dumps({"error": "Authentication required"})
 
-    @tool
-    async def delete_mcp_server(name: str) -> str:
-        """
-        Delete an MCP server by name.
+        # Check if name is taken by this user
+        exists = await MCPServer.objects.filter(
+            name=name, 
+            owner_id=user_id
+        ).aexists()
         
-        Args:
-            name: Name of the server to delete
-        """
+        if exists:
+            return json.dumps({"error": f"Server '{name}' already exists"})
+            
+        # Create the server
+        server = await MCPServer.objects.acreate(
+            name=name,
+            url=url,
+            transport=transport,
+            description=description,
+            requires_oauth2=requires_oauth2,
+            is_public=is_public,
+            owner_id=user_id,
+            enabled=True
+        )
+        
+        return json.dumps({
+            "success": True,
+            "message": f"Successfully added MCP server '{name}'",
+            "server_id": server.id,
+            "name": name
+        })
+        
+    except Exception as e:
+        logger.exception(f"Error adding MCP server: {e}")
+        return json.dumps({"error": str(e)})
+
+@tool
+async def delete_mcp_server(name: str, runtime: ToolRuntime) -> str:
+    """
+    Delete an MCP server by name.
+    
+    Args:
+        name: Name of the server to delete
+        runtime: ToolRuntime to access state
+    """
+    try:
+        user_id = runtime.state.get("user_id")
         if not user_id:
-            return "Error: You must be authenticated to delete an MCP server."
-            
+            return json.dumps({"error": "Authentication required"})
+
+        # Find server owned by user
         try:
-            # Find server owned by user
-            try:
-                server = await MCPServer.objects.aget(name=name, owner_id=user_id)
-            except MCPServer.DoesNotExist:
-                return f"Error: Server '{name}' not found or you do not have permission to delete it."
-                
-            await server.adelete()
-            return f"Successfully deleted MCP server '{name}'."
+            server = await MCPServer.objects.aget(name=name, owner_id=user_id)
+        except MCPServer.DoesNotExist:
+            return json.dumps({"error": f"Server '{name}' not found or permission denied"})
             
-        except Exception as e:
-            logger.exception(f"Error deleting MCP server: {e}")
-            return f"Error deleting MCP server: {str(e)}"
-            
-    return [add_mcp_server, delete_mcp_server]
+        await server.adelete()
+        return json.dumps({
+            "success": True,
+            "message": f"Successfully deleted MCP server '{name}'",
+            "name": name
+        })
+        
+    except Exception as e:
+        logger.exception(f"Error deleting MCP server: {e}")
+        return json.dumps({"error": str(e)})
+
+@tool
+async def list_mcp_servers(runtime: ToolRuntime, page: int = 1, page_size: int = 10) -> str:
+    """
+    List all MCP servers owned by the authenticated user with pagination.
+    
+    Args:
+        runtime: ToolRuntime to access state
+        page: Page number (default 1)
+        page_size: Number of items per page (default 10)
+        
+    Returns:
+        JSON string containing list of servers and pagination metadata.
+    """
+    try:
+        user_id = runtime.state.get("user_id")
+        if not user_id:
+            return json.dumps({"error": "Authentication required"})
+
+        # Ensure valid pagination params
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))  # Cap at 100
+
+        # Base queryset ordered by creation time
+        qs = MCPServer.objects.filter(owner_id=user_id).order_by('-created_at')
+        
+        # Get total count asynchronously
+        total_count = await qs.acount()
+        
+        # Calculate pagination
+        start = (page - 1) * page_size
+        end = start + page_size
+        total_pages = (total_count + page_size - 1) // page_size
+        
+        # Get page data
+        servers = []
+        async for server in qs[start:end]:
+            servers.append({
+                "name": server.name,
+                "transport": server.transport,
+                "url": server.url,
+                "is_public": server.is_public,
+                "description": server.description,
+                "created_at": server.created_at.isoformat() if server.created_at else None
+            })
+        
+        return json.dumps({
+            "servers": servers,
+            "pagination": {
+                "total": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages
+            }
+        })
+        
+    except Exception as e:
+        logger.exception(f"Error listing MCP servers: {e}")
+        return json.dumps({"error": str(e)})

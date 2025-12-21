@@ -18,22 +18,16 @@ from asgiref.sync import sync_to_async
 from django.contrib.auth.models import User
 
 from app.agent.tools import (
-    get_mcp_management_tools,
     get_current_datetime,
     search_web,
     get_system_info,
-    send_message_to_a2a_agent
+    send_message_to_a2a_agent,
+    add_mcp_server,
+    delete_mcp_server,
+    list_mcp_servers
 )
 
 logger = logging.getLogger(__name__)
-
-
-
-
-
-
-
-
 
 
 async def get_tools_from_config(
@@ -53,10 +47,8 @@ async def get_tools_from_config(
     Returns:
         List of tool functions
     """
-    tools_list = [get_system_info]
-
-    # Add MCP management tools
-    tools_list.extend(get_mcp_management_tools(user_id))
+    # Internal tools
+    tools_list = [get_system_info, add_mcp_server, delete_mcp_server, list_mcp_servers]
 
     # Add A2A tool if agents are available
     if a2a_agents and len(a2a_agents) > 0:
@@ -160,13 +152,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     else:
         # Use standard system message for non-A2A assistants
         if assistant and assistant.get("instructions"):
-            system_message = f"""{base_system_message}
+            system_message = f"""
+            {base_system_message}
 
-# Custom Assistant Instructions
-{assistant.get("instructions")}
+            # Custom Assistant Instructions
+            {assistant.get("instructions")}
 
-Follow the custom instructions above while helping the user.
-"""
+            Follow the custom instructions above while helping the user.
+            """
         else:
             system_message = base_system_message
 
