@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'strawberry_django',
     'django_svelte_jsoneditor',
+    # 'oauth2_provider',
     'app',
 ]
 
@@ -277,3 +278,5 @@ LOGGING = {
 # Create logs directory if it doesn't exist
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+# LOGIN_URL = '/admin/login/'

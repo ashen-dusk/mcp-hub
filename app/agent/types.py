@@ -22,3 +22,10 @@ class AgentState(MessagesState):
     # LLM provider configuration
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
+    plan_mode: Optional[bool] = None
+    
+    # Deepagents todo list for plan mode
+    todos: Optional[List[Dict[str, Any]]] = None
+    
+    # Authenticated user ID for ownership checks
+    user_id: Optional[int] = None

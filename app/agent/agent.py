@@ -7,6 +7,7 @@ from app.agent.types import AgentState
 from app.agent.chat import chat_node, get_tools_from_config
 from app.agent.utils import get_a2a_agents_from_assistant
 from app.mcp.utils import fetch_mcp_config_from_sessions
+from app.agent.deepagents_subgraph import deepagents_node
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 from langchain_core.messages import ToolMessage
@@ -30,11 +31,14 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
 
     # Extract A2A agents from assistant config
     a2a_agents = get_a2a_agents_from_assistant(assistant)
+    
+    user_id = state.get("user_id", None)
 
     tools = await get_tools_from_config(
         mcp_config=mcp_config,
         selected_tools=selected_tools,
-        a2a_agents=a2a_agents
+        a2a_agents=a2a_agents,
+        user_id=user_id
     )
     messages = state.get("messages", [])
 
@@ -142,6 +146,23 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
 
     return state
 
+async def begin_node(state: AgentState, config: RunnableConfig):
+    """Decide whether to use deepagents or existing agent based on plan_mode."""
+    # Just pass through state, routing happens in conditional edge
+    return state
+
+async def route_begin(state: AgentState, config: RunnableConfig):
+    """Route from begin_node to either deepagents or chat_node."""
+    assistant = state.get("assistant", None)
+    assistant_config = assistant.get("config", {}) if assistant else {}
+    
+    if state.get("plan_mode") or assistant_config.get("plan_mode"):
+        logger.info("[route_begin] Routing to deepagents_subgraph")
+        return "deepagents_node"
+    
+    logger.info("[route_begin] Routing to chat_node")
+    return "chat_node"
+
 async def route(state: AgentState, config: RunnableConfig):
     """Route after the chat node based on tool calls and assistant settings."""
     messages = state.get("messages", [])
@@ -169,16 +190,30 @@ async def route(state: AgentState, config: RunnableConfig):
 graph_builder = StateGraph(AgentState)
 
 # nodes
+graph_builder.add_node("begin_node", begin_node)
+graph_builder.add_node("deepagents_subgraph", deepagents_node)
 graph_builder.add_node("chat_node", chat_node)
 graph_builder.add_node("tools", async_tool_node)
 graph_builder.add_node("interrupt_node", interrupt_node)
 
-# edges
-graph_builder.add_edge(START, "chat_node")
+# edges from START
+graph_builder.add_edge(START, "begin_node")
+
+# conditional routing from begin_node
+graph_builder.add_conditional_edges(
+    "begin_node",
+    route_begin,
+    ["deepagents_subgraph", "chat_node"]
+)
+
+# deepagents goes directly to END
+graph_builder.add_edge("deepagents_subgraph", END)
+
+# existing chat_node edges
 graph_builder.add_edge("interrupt_node", "tools")
 graph_builder.add_edge("tools", "chat_node")
 
-# conditional edges
+# conditional edges from chat_node
 graph_builder.add_conditional_edges(
     "chat_node",
     route,

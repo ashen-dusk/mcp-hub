@@ -7,10 +7,12 @@ requires-python = ">=3.13"
 dependencies = [
     "a2a-sdk>=0.3.19",
     "ag-ui-langgraph==0.0.22",
+    "deepagents>=0.3.0",
     "dj-database-url>=3.0.1",
     "django>=5.2.7",
     "django-choices-field>=3.1.0",
     "django-cors-headers>=4.9.0",
+    "django-oauth-toolkit>=3.1.0",
     "django-svelte-jsoneditor>=0.4.4",
     "fastapi>=0.123.3",
     "fastmcp>=2.12.4",
