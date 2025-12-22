@@ -87,10 +87,10 @@ async def add_mcp_server(
     is_public: bool = False
 ) -> str:
     """
-    Add a new MCP server to the registry.
+    Add a new MCP server or update an existing one.
     
     Args:
-        name: Name of the server
+        name: Name of the server (unique identifier for updates)
         url: URL or command to connect to the server
         transport: Transport type (sse, websocket, stdio, streamable_http)
         runtime: ToolRuntime to access state
@@ -104,35 +104,47 @@ async def add_mcp_server(
             return json.dumps({"error": "Authentication required"})
 
         # Check if name is taken by this user
-        exists = await MCPServer.objects.filter(
-            name=name, 
-            owner_id=user_id
-        ).aexists()
-        
-        if exists:
-            return json.dumps({"error": f"Server '{name}' already exists"})
+        try:
+            server = await MCPServer.objects.aget(name=name, owner_id=user_id)
+            # Update existing server
+            server.url = url
+            server.transport = transport
+            server.description = description
+            server.requires_oauth2 = requires_oauth2
+            server.is_public = is_public
+            await server.asave()
             
-        # Create the server
-        server = await MCPServer.objects.acreate(
-            name=name,
-            url=url,
-            transport=transport,
-            description=description,
-            requires_oauth2=requires_oauth2,
-            is_public=is_public,
-            owner_id=user_id,
-            enabled=True
-        )
-        
-        return json.dumps({
-            "success": True,
-            "message": f"Successfully added MCP server '{name}'",
-            "server_id": server.id,
-            "name": name
-        })
+            return json.dumps({
+                "success": True,
+                "message": f"Successfully updated MCP server '{name}'",
+                "server_id": server.id,
+                "name": name,
+                "action": "updated"
+            })
+            
+        except MCPServer.DoesNotExist:
+            # Create the server
+            server = await MCPServer.objects.acreate(
+                name=name,
+                url=url,
+                transport=transport,
+                description=description,
+                requires_oauth2=requires_oauth2,
+                is_public=is_public,
+                owner_id=user_id,
+                enabled=True
+            )
+            
+            return json.dumps({
+                "success": True,
+                "message": f"Successfully added MCP server '{name}'",
+                "server_id": server.id,
+                "name": name,
+                "action": "created"
+            })
         
     except Exception as e:
-        logger.exception(f"Error adding MCP server: {e}")
+        logger.exception(f"Error adding/updating MCP server: {e}")
         return json.dumps({"error": str(e)})
 
 @tool
