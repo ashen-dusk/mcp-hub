@@ -11,8 +11,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from app.agent.types import AgentState
 from app.agent.model import get_llm
 from app.agent.utils import get_a2a_agents_from_assistant, create_a2a_system_prompt
-from app.mcp.utils import fetch_mcp_config_from_sessions
-from app.mcp.utils import fetch_mcp_config_from_sessions
+
 from app.mcp.models import MCPServer
 from asgiref.sync import sync_to_async
 from django.contrib.auth.models import User
@@ -88,22 +87,15 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     sessionId = state.get("sessionId", None)
     assistant = state.get("assistant", None)
     selected_tools = state.get("selectedTools", None)
-    mcp_sessions = state.get("mcpSessions", None)
     user_id = state.get("user_id", None)
 
-    # Fetch MCP config using server-specific sessionIds
-    mcp_config = await fetch_mcp_config_from_sessions(mcp_sessions)
-
-    if mcp_config:
-        logging.info(f"[chat_node] Using config with {len(mcp_config)} servers")
-    else:
-        logging.info(f"[chat_node] No MCP config available")
-
+    # Get MCP config from state (populated by Next.js middleware)
+    mcp_config = state.get("mcpConfig", None)
     # Extract A2A agents from assistant config
     a2a_agents = get_a2a_agents_from_assistant(assistant)
 
     logging.info(f"[chat_node] sessionId: {sessionId}")
-    logging.info(f"[chat_node] mcp_sessions: {mcp_sessions}")
+    logging.info(f"[chat_node] mcp_config: {mcp_config}")
     logging.info(f"[chat_node] selectedTools: {selected_tools}")
     logging.info(f"[chat_node] a2a_agents: {a2a_agents}")
 

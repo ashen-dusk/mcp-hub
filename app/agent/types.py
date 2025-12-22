@@ -15,8 +15,8 @@ class AgentState(MessagesState):
     approval_response: Optional[Dict[str, Any]] = None
     current_tool_call: Optional[Dict[str, Any]] = None
 
-    # MCP session IDs for fetching server configs from Next.js
-    mcpSessions: Optional[List[str]] = None
+    # MCP server configuration (populated by Next.js middleware)
+    mcpConfig: Optional[Dict[str, Any]] = None
     # Selected tool names to filter
     selectedTools: Optional[List[str]] = None
     # LLM provider configuration

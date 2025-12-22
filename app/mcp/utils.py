@@ -247,6 +247,9 @@ def generate_anonymous_session_key(request) -> str:
 
 async def fetch_mcp_config_from_sessions(mcp_sessions: Optional[List[str]]) -> Optional[Dict[str, Any]]:
     """
+    DEPRECATED: This function is no longer used.
+    MCP config is now populated directly in state by the Next.js middleware.
+    
     Fetch MCP server configurations using server-specific sessionIds.
 
     This function calls the Next.js API to retrieve server configurations
