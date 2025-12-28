@@ -91,6 +91,11 @@ class MCPServer(models.Model):
     query_params = models.JSONField(default=dict, blank=True)
     tools = models.JSONField(default=list, blank=True)
 
+    is_featured = models.BooleanField(
+        default=False,
+        help_text="Whether this server is featured and should be prominently displayed"
+    )
+
     # ── django: connection status fields ───────────────────────────────────────
     enabled = models.BooleanField(default=True)
     requires_oauth2 = models.BooleanField(

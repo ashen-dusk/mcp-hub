@@ -60,6 +60,7 @@ class MCPServerFilter:
     connection_status: auto
     is_public: auto
     categories: Optional[CategoryFilter]
+    is_featured: auto
 
 @strawberry_django.order_type(MCPServer)
 class MCPServerOrder:
@@ -81,6 +82,7 @@ class MCPServerType(Node):
     updated_at: datetime
     created_at: datetime
     is_public: bool
+    is_featured: bool
 
     @strawberry_django.field
     async def categories(self, root: MCPServer) -> List[CategoryType]:
