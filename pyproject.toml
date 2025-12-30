@@ -1,9 +1,10 @@
 [project]
-name = "django-copilotkit"
+name = "mcp-hub"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
+
 dependencies = [
     "a2a-sdk>=0.3.19",
     "ag-ui-langgraph==0.0.22",
@@ -31,3 +32,6 @@ dependencies = [
     "supabase>=2.27.0",
     "uvicorn>=0.37.0",
 ]
+
+[tool.uv.extra-build-dependencies]
+pyiceberg = ["poetry"]
