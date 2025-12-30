@@ -39,12 +39,12 @@ def serialize_mcp_server(server):
         "created_at": server.created_at.isoformat(),
         "updated_at": server.updated_at.isoformat(),
         "owner_id": server.owner_id,
-        "category_id": server.category_id,
+        "category_ids": [c.id for c in server.categories.all()],
     }
 
 
 def export_to_json(out_file="exported_mcp_servers.json"):
-    servers = MCPServer.objects.all().order_by("created_at")
+    servers = MCPServer.objects.prefetch_related('categories').order_by("created_at")
 
     data = [serialize_mcp_server(s) for s in servers]
 

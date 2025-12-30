@@ -1,30 +1,30 @@
 from __future__ import annotations
 
+import os
+from typing import Optional
 from dataclasses import dataclass
-from typing import Callable, Optional
 
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
+from supabase import create_client, Client
 
-from .google import verify_google_id_token, GoogleTokenError, GoogleUserInfo
-from .services import UserService
-
-
-@dataclass
-class AuthenticatedUser:
-    id: str
-    email: str
-    is_authenticated: bool = True
+from .services import UserService, AuthUserInfo
 
 
-class GoogleBearerAuthMiddleware(MiddlewareMixin):
+class SupabaseBearerAuthMiddleware(MiddlewareMixin):
     """
-    Authenticate requests using a Google ID token provided as a Bearer token.
+    Authenticate requests using a Supabase JWT provided as a Bearer token.
 
-    - Expected header: Authorization: Bearer <id_token>
-    - On success, attaches `request.user` with minimal fields and `request.auth_claims`.
+    - Expected header: Authorization: Bearer <access_token>
+    - On success, attaches `request.user` to the Django user.
     - On failure, leaves `request.user` as AnonymousUser.
     """
+
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        url: str = os.environ.get("SUPABASE_URL", "")
+        key: str = os.environ.get("SUPABASE_KEY", "")
+        self.supabase: Client = create_client(url, key)
 
     def process_request(self, request):
         authorization: Optional[str] = request.META.get("HTTP_AUTHORIZATION")
@@ -38,32 +38,45 @@ class GoogleBearerAuthMiddleware(MiddlewareMixin):
             return None
 
         try:
-            google_info = verify_google_id_token(token)
-        except GoogleTokenError as exc:
-            print(f"[auth] google token verification failed: {exc}")
-            request.user = getattr(request, "user", AnonymousUser())
-            return None
+            # Verify token with Supabase
+            user_response = self.supabase.auth.get_user(token)
+            sb_user = user_response.user
+            
+            if not sb_user or not sb_user.email:
+                raise ValueError("No user or email found in Supabase response")
 
-        # Get or create Django User
-        try:
-            django_user, created = UserService.get_or_create_user_from_google(google_info)
+            # Extract user info
+            # Supabase stores extra metadata in user_metadata
+            metadata = sb_user.user_metadata or {}
+            # print(f"metadata: {metadata}, sb_user: {sb_user}")
+            
+            user_info = AuthUserInfo(
+                sub=sb_user.id,
+                email=sb_user.email,
+                email_verified=metadata.get("email_verified", False),
+                name=metadata.get("full_name") or metadata.get("name") or sb_user.email,
+                picture=metadata.get("avatar_url") or metadata.get("picture"),
+            )
+            
+            # Get or create Django User
+            django_user, created = UserService.get_or_create_user(user_info)
             if created:
-                print(f"[auth] created new user: {django_user.username} ({google_info.email})")
+                print(f"[auth] created new user: {django_user.username} ({user_info.email})")
             else:
-                print(f"[auth] authenticated existing user: {django_user.username} ({google_info.email})")
+                print(f"[auth] authenticated existing user: {django_user.username} ({user_info.email})")
             
             # Attach Django user to request
             request.user = django_user
             request.auth_claims = {
-                "sub": google_info.sub,
-                "email": google_info.email,
-                "email_verified": google_info.email_verified,
-                "name": google_info.name,
-                "picture": google_info.picture,
+                "sub": user_info.sub,
+                "email": user_info.email,
+                "email_verified": user_info.email_verified,
+                "name": user_info.name,
+                "picture": user_info.picture,
             }
             
         except Exception as exc:
-            print(f"[auth] user creation/retrieval failed: {exc}")
+            print(f"[auth] token verification failed: {exc}")
             request.user = getattr(request, "user", AnonymousUser())
             return None
         

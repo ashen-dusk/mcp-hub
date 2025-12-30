@@ -186,7 +186,7 @@ graph_builder = StateGraph(AgentState)
 
 # nodes
 graph_builder.add_node("begin_node", begin_node)
-graph_builder.add_node("deepagents_subgraph", deepagents_node)
+graph_builder.add_node("deepagents_node", deepagents_node)
 graph_builder.add_node("chat_node", chat_node)
 graph_builder.add_node("tools", async_tool_node)
 graph_builder.add_node("interrupt_node", interrupt_node)
@@ -198,11 +198,11 @@ graph_builder.add_edge(START, "begin_node")
 graph_builder.add_conditional_edges(
     "begin_node",
     route_begin,
-    ["deepagents_subgraph", "chat_node"]
+    ["deepagents_node", "chat_node"]
 )
 
 # deepagents goes directly to END
-graph_builder.add_edge("deepagents_subgraph", END)
+graph_builder.add_edge("deepagents_node", END)
 
 # existing chat_node edges
 graph_builder.add_edge("interrupt_node", "tools")

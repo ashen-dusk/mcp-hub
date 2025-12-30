@@ -46,11 +46,11 @@ def import_categories(json_file):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python import_categories.py <file.json>")
+    json_file = sys.argv[1] if len(sys.argv) > 1 else "exported_categories.json"
+    if not os.path.exists(json_file):
+        print(f"Usage: python import_categories.py <file.json>\nDefaulting to '{json_file}' but it was not found.")
         sys.exit(1)
 
-    json_file = sys.argv[1]
     import_categories(json_file)
 
 # uv run python scripts/import_categories.py exported_categories.json  

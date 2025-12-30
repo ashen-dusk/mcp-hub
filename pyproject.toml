@@ -16,7 +16,6 @@ dependencies = [
     "django-svelte-jsoneditor>=0.4.4",
     "fastapi>=0.123.3",
     "fastmcp>=2.12.4",
-    "google-auth>=2.41.1",
     "langchain-deepseek>=0.1.4",
     "langchain-mcp-adapters>=0.1.11",
     "langchain-openai>=0.3.35",
@@ -29,5 +28,6 @@ dependencies = [
     "redis[hiredis]>=6.4.0",
     "shortuuid>=1.0.13",
     "strawberry-graphql-django>=0.66.2",
+    "supabase>=2.27.0",
     "uvicorn>=0.37.0",
 ]

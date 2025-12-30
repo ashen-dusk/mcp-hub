@@ -2,7 +2,7 @@
 import logging
 from typing import Optional, List, Any
 from langchain.tools import tool, ToolRuntime
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from app.mcp.models import MCPServer
 from asgiref.sync import sync_to_async
 

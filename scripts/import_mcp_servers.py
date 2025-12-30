@@ -66,7 +66,7 @@ async def import_mcp_servers(path):
             requires_oauth2=to_bool(record.get("requires_oauth2")),
             is_public=to_bool(record.get("is_public")),
             description=record.get("description") or None,
-            category_id=record.get("category_id") or None,
+            category_ids=record.get("category_ids") or None,
         )
 
         print(f"✅ Imported: {created.name}")
@@ -75,11 +75,11 @@ async def import_mcp_servers(path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python import_mcp.py <file.json>")
+    json_file = sys.argv[1] if len(sys.argv) > 1 else "exported_mcp_servers.json"
+    if not os.path.exists(json_file):
+        print(f"Usage: python import_mcp_servers.py <file.json>\nDefaulting to '{json_file}' but it was not found.")
         sys.exit(1)
 
-    json_file = sys.argv[1]
     asyncio.run(import_mcp_servers(json_file))
 
 # uv run python scripts/import_mcp_servers.py exported_mcp_servers.json
