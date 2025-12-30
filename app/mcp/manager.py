@@ -10,7 +10,9 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from fastmcp.client import Client as FastMCPClient
 from fastmcp.client.auth.oauth import FileTokenStorage
 

@@ -49,7 +49,10 @@ INSTALLED_APPS = [
     'django_svelte_jsoneditor',
     # 'oauth2_provider',
     'app',
+    'app.auth',
 ]
+
+AUTH_USER_MODEL = 'mcp_auth.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -86,10 +89,13 @@ WSGI_APPLICATION = 'assistant.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            'timeout': 20,  # 20 seconds
+            'init_command': 'PRAGMA journal_mode=WAL;',
+        },
     }
 }
 

@@ -10,7 +10,9 @@ import strawberry
 import strawberry_django
 from strawberry.types import Info
 from strawberry_django.relay import DjangoListConnection
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 from app.graphql.permissions import IsAuthenticated
 from app.models import Assistant

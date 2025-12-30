@@ -1,6 +1,5 @@
-import shortuuid
+from django.conf import settings
 from django.db import models
-from django.contrib.auth.models import User
 from .mcp.models import MCPServer, Category
 
 __all__ = ["MCPServer", "Category", "Assistant"]
@@ -26,7 +25,7 @@ class Assistant(models.Model):
 
     id = models.CharField(primary_key=True, max_length=30, editable=False, unique=True)
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         related_name="assistants",
         on_delete=models.CASCADE,
         null=True,  # Temporarily nullable for migration

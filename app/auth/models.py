@@ -17,13 +17,15 @@ class User(AbstractUser):
         help_text='User role for access control'
     )
 
-    google_id = models.CharField(
+    sub = models.CharField(
         max_length=255,
         unique=True,
         null=True,
         blank=True,
-        help_text='Google OAuth user ID (sub claim)'
+        help_text='Subject ID (User ID)'
     )
+
+
 
     profile_picture = models.URLField(
         max_length=500,

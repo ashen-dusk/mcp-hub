@@ -48,7 +48,7 @@ class SupabaseBearerAuthMiddleware(MiddlewareMixin):
             # Extract user info
             # Supabase stores extra metadata in user_metadata
             metadata = sb_user.user_metadata or {}
-            print(f"metadata: {metadata}, sb_user: {sb_user}")
+            # print(f"metadata: {metadata}, sb_user: {sb_user}")
             
             user_info = AuthUserInfo(
                 sub=sb_user.id,

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 from django.db import transaction
 
 
@@ -48,10 +50,24 @@ class UserService:
                 
                 full_name = user_info.name or ''
                 first_name, last_name = UserService._split_name(full_name)
+                changed = False
                 # Update name if changed
                 if user.first_name != first_name or user.last_name != last_name:
                     user.first_name = first_name
                     user.last_name = last_name
+                    changed = True
+                
+                # Update profile picture if changed
+                if user_info.picture and user.profile_picture != user_info.picture:
+                    user.profile_picture = user_info.picture
+                    changed = True
+
+                # Update sub if missing or changed
+                if user_info.sub and user.sub != user_info.sub:
+                    user.sub = user_info.sub
+                    changed = True
+
+                if changed:
                     user.save()
                 
                 return user, created
@@ -74,6 +90,8 @@ class UserService:
                     email=user_info.email,
                     first_name=first_name,
                     last_name=last_name,
+                    sub=user_info.sub,
+                    profile_picture=user_info.picture,
                     is_active=True
                 )
                 

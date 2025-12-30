@@ -1,7 +1,6 @@
+from django.conf import settings
 from django.db import models
-from django.contrib.auth.models import User
 from django.utils.text import slugify
-import uuid
 import shortuuid
 
 # ── Category: model ──────────────────────────────────────────────────────────────
@@ -74,7 +73,7 @@ class MCPServer(models.Model):
     
     # User ownership and sharing
     owner = models.ForeignKey(
-        User, 
+        settings.AUTH_USER_MODEL, 
         on_delete=models.CASCADE, 
         null=True, 
         blank=True,
@@ -146,7 +145,7 @@ class MCPServer(models.Model):
         """Check if this server is public and available to all users."""
         return self.is_public
     
-    def can_be_accessed_by(self, user: User) -> bool:
+    def can_be_accessed_by(self, user) -> bool:
         """Check if a user can access this server."""
         if self.is_publicly_available:
             return True

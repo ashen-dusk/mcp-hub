@@ -14,7 +14,9 @@ from app.agent.utils import get_a2a_agents_from_assistant, create_a2a_system_pro
 
 from app.mcp.models import MCPServer
 from asgiref.sync import sync_to_async
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 from app.agent.tools import (
     get_current_datetime,
