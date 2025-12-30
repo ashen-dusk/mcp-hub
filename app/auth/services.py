@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional, Tuple
 from django.contrib.auth.models import User
 from django.db import transaction
-from .google import GoogleUserInfo
+
+
+@dataclass
+class AuthUserInfo:
+    sub: str
+    email: str
+    email_verified: bool
+    name: Optional[str]
+    picture: Optional[str]
 
 
 class UserService:
@@ -24,20 +33,22 @@ class UserService:
             return parts[0], ' '.join(parts[1:])
     
     @staticmethod
-    def get_or_create_user_from_google(google_info: GoogleUserInfo) -> Tuple[User, bool]:
+    def get_or_create_user(user_info: AuthUserInfo) -> Tuple[User, bool]:
         """
-        Get or create a Django User from Google OAuth info.
+        Get or create a Django User from OAuth info.
         
         Returns:
             Tuple of (User, created) where created is True if user was just created.
         """
         with transaction.atomic():
             try:
-                user = User.objects.get(email=google_info.email)
+                # Try to find by email
+                user = User.objects.get(email=user_info.email)
                 created = False
                 
-                full_name = google_info.name or ''
+                full_name = user_info.name or ''
                 first_name, last_name = UserService._split_name(full_name)
+                # Update name if changed
                 if user.first_name != first_name or user.last_name != last_name:
                     user.first_name = first_name
                     user.last_name = last_name
@@ -46,19 +57,21 @@ class UserService:
                 return user, created
                 
             except User.DoesNotExist:
-                username = google_info.email.split('@')[0]
+                # Create new user
+                username = user_info.email.split('@')[0]
                 base_username = username
                 counter = 1
+                # Ensure unique username
                 while User.objects.filter(username=username).exists():
                     username = f"{base_username}{counter}"
                     counter += 1
                 
-                full_name = google_info.name or ''
+                full_name = user_info.name or ''
                 first_name, last_name = UserService._split_name(full_name)
                 
                 user = User.objects.create_user(
                     username=username,
-                    email=google_info.email,
+                    email=user_info.email,
                     first_name=first_name,
                     last_name=last_name,
                     is_active=True

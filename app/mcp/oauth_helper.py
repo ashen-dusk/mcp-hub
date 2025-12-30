@@ -110,6 +110,7 @@ async def build_authorization_url(
             grant_types=["authorization_code", "refresh_token"],
             response_types=["code"],
             scope="",
+            token_endpoint_auth_method="client_secret_basic",
         )
 
         # Create user-isolated storage
