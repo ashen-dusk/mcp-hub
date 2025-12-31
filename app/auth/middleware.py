@@ -6,10 +6,10 @@ from dataclasses import dataclass
 
 from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
-from supabase import create_client, Client
 
-from .services import UserService, AuthUserInfo
-
+from .jwks import JWKSClient
+from .services import AuthUserInfo, UserService
+import jwt
 
 class SupabaseBearerAuthMiddleware(MiddlewareMixin):
     """
@@ -17,14 +17,14 @@ class SupabaseBearerAuthMiddleware(MiddlewareMixin):
 
     - Expected header: Authorization: Bearer <access_token>
     - On success, attaches `request.user` to the Django user.
-    - On failure, leaves `request.user` as AnonymousUser.
+    - On failure, leaves `request.user` to AnonymousUser.
     """
 
     def __init__(self, get_response):
         super().__init__(get_response)
         url: str = os.environ.get("SUPABASE_URL", "")
-        key: str = os.environ.get("SUPABASE_KEY", "")
-        self.supabase: Client = create_client(url, key)
+        # Initialize JWKS client
+        self.jwks_client = JWKSClient(url)
 
     def process_request(self, request):
         authorization: Optional[str] = request.META.get("HTTP_AUTHORIZATION")
@@ -38,23 +38,42 @@ class SupabaseBearerAuthMiddleware(MiddlewareMixin):
             return None
 
         try:
-            # Verify token with Supabase
-            user_response = self.supabase.auth.get_user(token)
-            sb_user = user_response.user
-            
-            if not sb_user or not sb_user.email:
-                raise ValueError("No user or email found in Supabase response")
+            # Decode header to find Key ID (kid)
+            unverified_header = jwt.get_unverified_header(token)
+            kid = unverified_header.get("kid")
+
+            # Fetch public key
+            key = self.jwks_client.get_signing_key(kid)
+            if not key:
+                raise ValueError("Public key not found or JWKS fetch failed")
+
+            # Verify token
+            # Supabase default audience is "authenticated"
+            payload = jwt.decode(
+                token,
+                key=key,
+                algorithms=["RS256", "ES256"],
+                audience="authenticated",
+                leeway=60,
+                options={"verify_exp": True},
+            )
+
+            # Check for email
+            email = payload.get("email")
+            sub = payload.get("sub")
+
+            if not sub or not email:
+                raise ValueError("No sub or email found in JWT payload")
 
             # Extract user info
-            # Supabase stores extra metadata in user_metadata
-            metadata = sb_user.user_metadata or {}
-            # print(f"metadata: {metadata}, sb_user: {sb_user}")
+            # Supabase stores extra metadata in user_metadata claim
+            metadata = payload.get("user_metadata", {})
             
             user_info = AuthUserInfo(
-                sub=sb_user.id,
-                email=sb_user.email,
-                email_verified=metadata.get("email_verified", False),
-                name=metadata.get("full_name") or metadata.get("name") or sb_user.email,
+                sub=sub,
+                email=email,
+                email_verified=metadata.get("email_verified", False) or payload.get("email_verified", False),
+                name=metadata.get("full_name") or metadata.get("name") or email,
                 picture=metadata.get("avatar_url") or metadata.get("picture"),
             )
             
@@ -63,7 +82,8 @@ class SupabaseBearerAuthMiddleware(MiddlewareMixin):
             if created:
                 print(f"[auth] created new user: {django_user.username} ({user_info.email})")
             else:
-                print(f"[auth] authenticated existing user: {django_user.username} ({user_info.email})")
+                pass
+                # print(f"[auth] authenticated existing user: {django_user.username} ({user_info.email})")
             
             # Attach Django user to request
             request.user = django_user
@@ -75,6 +95,12 @@ class SupabaseBearerAuthMiddleware(MiddlewareMixin):
                 "picture": user_info.picture,
             }
             
+        except jwt.ExpiredSignatureError:
+            print("[auth] token expired")
+            request.user = getattr(request, "user", AnonymousUser())
+        except jwt.PyJWTError as e:
+            print(f"[auth] token decode error: {e}")
+            request.user = getattr(request, "user", AnonymousUser())
         except Exception as exc:
             print(f"[auth] token verification failed: {exc}")
             request.user = getattr(request, "user", AnonymousUser())
