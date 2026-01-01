@@ -1,3 +1,4 @@
+import shortuuid
 from django.conf import settings
 from django.db import models
 from .mcp.models import MCPServer, Category
