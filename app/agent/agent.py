@@ -9,8 +9,7 @@ from app.agent.utils import get_a2a_agents_from_assistant
 
 from app.agent.deepagents_subgraph import deepagents_node
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import AIMessage
-from langchain_core.messages import ToolMessage
+from langchain.messages import AIMessage, ToolMessage
 from typing import cast
 import json
 import logging
@@ -170,6 +169,13 @@ async def route(state: AgentState, config: RunnableConfig):
         ).get("tool_calls")
 
         if tool_calls:
+            # Check if the tool being called is initiate_connection
+            tool_name = tool_calls[0].get("name") if tool_calls else None
+
+            # Always interrupt for initiate_connection
+            if tool_name == "initiate_connection":
+                logger.info(f"[route] Interrupting for initiate_connection tool call")
+                return "interrupt_node"
 
             assistant = state.get("assistant", None)
             assistant_config = assistant.get("config", {}) if assistant else {}

@@ -12,6 +12,7 @@ import platform
 from datetime import datetime, timezone, timedelta
 from langchain_tavily import TavilySearch
 from app.a2a.client import send_a2a_message
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -236,3 +237,142 @@ async def list_mcp_servers(runtime: ToolRuntime, page: int = 1, page_size: int =
     except Exception as e:
         logger.exception(f"Error listing MCP servers: {e}")
         return json.dumps({"error": str(e)})
+
+@tool
+async def search_servers(
+    query: str,
+    page: int = 1,
+    page_size: int = 10
+) -> str:
+    """
+    Search for public MCP servers by name.
+
+    Args:
+        query: Search query to filter servers by name (required).
+        page: Page number (default: 1)
+        page_size: Number of results per page (default: 10, max: 100)
+
+    Returns:
+        JSON string containing search results with server details and pagination info.
+    """
+    try:
+        # Validate pagination parameters
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+
+        # Calculate pagination
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        # Query public servers that match the search query
+        qs = MCPServer.objects.filter(
+            is_public=True,
+            name__icontains=query
+        ).select_related('owner').order_by('-created_at')
+
+        # Get total count
+        total_count = await qs.acount()
+        total_pages = (total_count + page_size - 1) // page_size
+
+        # Get page data
+        servers = []
+        async for server in qs[start:end]:
+            servers.append({
+                "id": server.id,
+                "name": server.name,
+                "description": server.description,
+                "transport": server.transport,
+                "url": server.url,
+                # "requiresOauth2": server.requires_oauth2,
+                # "isPublic": server.is_public,
+                # "isFeatured": server.is_featured,
+                "createdAt": server.created_at.isoformat() if server.created_at else None,
+                # "owner": server.owner.username if server.owner else None
+            })
+
+        result = {
+            "success": True,
+            "servers": servers,
+            "pagination": {
+                "total": total_count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages
+            }
+        }
+
+        logger.info(f"Successfully retrieved {len(servers)} servers matching '{query}'")
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.exception(f"Error searching servers: {e}")
+        return json.dumps({"error": str(e)})
+
+@tool
+async def check_connections(runtime: ToolRuntime) -> str:
+    """
+    Check all active MCP connections for the authenticated user.
+
+    Args:
+        runtime: ToolRuntime to access state
+
+    Returns:
+        JSON string containing list of active connections with their status and metadata.
+    """
+    try:
+        user_id = runtime.state.get("user_id")
+        if not user_id:
+            return json.dumps({"error": "Authentication required"})
+
+        # Get the mcp-client base URL from environment
+        mcp_client_url = os.environ.get("MCP_CLIENT_URL", "http://localhost:3000")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{mcp_client_url}/api/mcp/connections",
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.info(f"Successfully retrieved {data.get('count', 0)} connections")
+                return json.dumps(data, indent=2)
+            elif response.status_code == 401:
+                return json.dumps({"error": "Unauthorized - Authentication failed"})
+            else:
+                return json.dumps({
+                    "error": f"API request failed with status {response.status_code}",
+                    "details": response.text
+                })
+
+    except httpx.TimeoutException:
+        logger.error("Timeout while connecting to MCP client API")
+        return json.dumps({"error": "Request timeout - MCP client API did not respond in time"})
+    except Exception as e:
+        logger.exception(f"Error checking connections: {e}")
+        return json.dumps({"error": str(e)})
+
+@tool
+async def initiate_connection(
+    server_url: str,
+    server_id: str = "",
+    server_name: str = "",
+    transport_type: str = "streamable_http",
+) -> str:
+    """
+    Initiate a connection to an MCP server with OAuth authentication.
+
+    This tool triggers user authentication flow. The actual connection result
+    will be provided through the interrupt/approval flow.
+
+    Args:
+        server_url: URL of the MCP server to connect to
+        server_id: ID of the server
+        server_name: Optional name for the server
+        transport_type: Transport type (sse or streamable_http, default: streamable_http)
+
+    Returns:
+        Empty string - result is populated from approval response
+    """
+    # Tool is intentionally empty - result comes from interrupt approval
+    # return ""

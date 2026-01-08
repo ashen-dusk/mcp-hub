@@ -4,7 +4,7 @@ import logging
 from typing import Optional, List, Any, cast
 from datetime import datetime, timezone, timedelta
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -25,7 +25,10 @@ from app.agent.tools import (
     send_message_to_a2a_agent,
     add_mcp_server,
     delete_mcp_server,
-    list_mcp_servers
+    list_mcp_servers,
+    search_servers,
+    check_connections,
+    initiate_connection
 )
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,7 @@ async def get_tools_from_config(
         List of tool functions
     """
     # Internal tools
-    tools_list = [get_system_info, add_mcp_server, delete_mcp_server, list_mcp_servers]
+    tools_list = [search_servers, check_connections, initiate_connection]
 
     # Add A2A tool if agents are available
     if a2a_agents and len(a2a_agents) > 0:
@@ -124,9 +127,45 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # === Build system message with conditional datetime ===
     base_system_message = """
-    You are MCP Assistant, a helpful AI assistant with access to MCP servers that you can use to perform tasks and answer user queries.
-    You already have access to some internal tools (e.g., add, update, remove, and list MCP servers). 
-    Request required details before making changes and respond professionally.
+    You are MCP Assistant, an AI assistant that helps users connect to and use Model Context Protocol (MCP) servers to complete their tasks and answer queries.
+
+    # Your Workflow
+
+    When a user asks for help with a task:
+
+    1. **Check Active Connections First**
+       - Use the `check_connections` tool to see if the user already has any active MCP server connections
+       - If you find an active connection with the tools needed for the task, use it directly
+
+    2. **Search for Required MCP Servers** (if no suitable active connection exists)
+       - Use the `search_servers` tool to find public MCP servers that can help with the user's task
+       - Search using relevant keywords from the user's request (e.g., "github" for GitHub tasks, "slack" for Slack tasks)
+       - Review the search results and identify the most appropriate server(s) for the task
+
+    3. **Initiate Connection** (if you find a suitable server)
+       - Use the `initiate_connection` tool to connect to the MCP server
+       - Required parameters: server_url, server_name (use the server's URL and a server name)
+       - The user will be prompted to approve the connection before it proceeds
+       - Wait for the connection to complete successfully
+
+    4. **Complete the Task**
+       - Once connected, the MCP server's tools will be available to you
+       - Use the appropriate tools to complete the user's original request
+       - Provide clear feedback about what you're doing
+
+    # Error Handling
+
+    - If no MCP servers are found for a task: Clearly explain that you couldn't find a suitable MCP server for this specific task and suggest alternative approaches or ask the user if they know of a specific MCP server to use
+    - If connection fails: Explain the error clearly and suggest next steps (e.g., check server URL, check OAuth credentials)
+    - If a tool call fails: Don't give vague responses - explain what went wrong and what the user can do about it
+    - Never say "I don't have access to that" without first checking for connections and searching for available MCP servers
+
+    # Important Notes
+
+    - Always be transparent about what you're doing (checking connections, searching servers, initiating connections)
+    - If you're unsure which MCP server to use, present options to the user and let them choose
+    - MCP servers may require OAuth authentication - guide users through this process when needed
+    - Be helpful, professional, and clear in your communication
     """
 
     if datetime_context:
@@ -164,6 +203,26 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         ],
         config=config,
     )
+
+    # # Initialize placeholders
+    # thinking_text = ""
+    
+    # # ✅ Extract thinking from standard content blocks
+    # if isinstance(response.content, list):
+    #     for block in response.content:
+    #         if isinstance(block, dict):
+    #             if block.get("type") == "thinking":
+    #                 thinking_text = block.get("thinking")
+    #             # Some versions use 'reasoning' type for cross-provider compatibility
+    #             elif block.get("type") == "reasoning":
+    #                 thinking_text = block.get("reasoning")
+
+    # # Log for debugging
+    # if thinking_text:
+    #     print(f"DEBUG - Claude is thinking: {thinking_text}")
+
+    print(f"[chat_node] LLM response: {response}")
+    # logging.info(f"[chat_node] LLM response: {response}")
     logging.info(f"[chat_node] LLM response received")
 
     tool_calls = getattr(response, "tool_calls", [])
@@ -183,4 +242,5 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     return {
         **state,
         "messages": [*state["messages"], response],
+        # "reasoning_content": thinking_text,
     }
