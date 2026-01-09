@@ -4,7 +4,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt
 from app.agent.types import AgentState
-from app.agent.chat import chat_node, get_tools_from_config
+from app.agent.chat import chat_node, get_tools
 from app.agent.utils import get_a2a_agents_from_assistant
 
 from app.agent.deepagents_subgraph import deepagents_node
@@ -28,7 +28,7 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
     
     user_id = state.get("user_id", None)
 
-    tools = await get_tools_from_config(
+    tools = await get_tools(
         mcp_config=mcp_config,
         selected_tools=selected_tools,
         a2a_agents=a2a_agents,

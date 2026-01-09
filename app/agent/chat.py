@@ -34,7 +34,7 @@ from app.agent.tools import (
 logger = logging.getLogger(__name__)
 
 
-async def get_tools_from_config(
+async def get_tools(
     mcp_config: Optional[dict] = None,
     selected_tools: Optional[List[str]] = None,
     a2a_agents: Optional[List[dict]] = None,
@@ -51,8 +51,8 @@ async def get_tools_from_config(
     Returns:
         List of tool functions
     """
-    # initialize tools
-    tools_list = []
+    # Internal tools
+    tools_list = [search_servers, check_connections, initiate_connection]
 
     # Add A2A tool if agents are available
     if a2a_agents and len(a2a_agents) > 0:
@@ -94,9 +94,6 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     selected_tools = state.get("selectedTools", None)
     user_id = state.get("user_id", None)
 
-    # === Initialize tools ===
-    internal_tools = [search_servers, check_connections, initiate_connection]
-
     # Get MCP config from state (populated by Next.js middleware)
     mcp_config = state.get("mcpConfig", None)
     # Extract A2A agents from assistant config
@@ -113,17 +110,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if messages and isinstance(messages[-1], HumanMessage):
         state["current_tool_call"] = None
 
-    tools = [
-        # MCP and A2A tools
-        *await get_tools_from_config(
-            mcp_config=mcp_config,
-            selected_tools=selected_tools,
-            a2a_agents=a2a_agents,
-            user_id=user_id,
-        ),
-        # Internal tools
-        *internal_tools,
-    ]
+    # Get tools from MCP config and A2A agents
+    tools = await get_tools(
+        mcp_config=mcp_config,
+        selected_tools=selected_tools,
+        a2a_agents=a2a_agents,
+        user_id=user_id
+    )
+    
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
     datetime_context = assistant_config.get("datetime_context", False)
