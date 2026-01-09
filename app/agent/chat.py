@@ -51,8 +51,8 @@ async def get_tools_from_config(
     Returns:
         List of tool functions
     """
-    # Internal tools
-    tools_list = [search_servers, check_connections, initiate_connection]
+    # initialize tools
+    tools_list = []
 
     # Add A2A tool if agents are available
     if a2a_agents and len(a2a_agents) > 0:
@@ -94,6 +94,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     selected_tools = state.get("selectedTools", None)
     user_id = state.get("user_id", None)
 
+    # === Initialize tools ===
+    internal_tools = [search_servers, check_connections, initiate_connection]
+
     # Get MCP config from state (populated by Next.js middleware)
     mcp_config = state.get("mcpConfig", None)
     # Extract A2A agents from assistant config
@@ -110,13 +113,17 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if messages and isinstance(messages[-1], HumanMessage):
         state["current_tool_call"] = None
 
-    # Get tools from MCP config and A2A agents
-    tools = await get_tools_from_config(
-        mcp_config=mcp_config,
-        selected_tools=selected_tools,
-        a2a_agents=a2a_agents,
-        user_id=user_id
-    )
+    tools = [
+        # MCP and A2A tools
+        *await get_tools_from_config(
+            mcp_config=mcp_config,
+            selected_tools=selected_tools,
+            a2a_agents=a2a_agents,
+            user_id=user_id,
+        ),
+        # Internal tools
+        *internal_tools,
+    ]
     # === Extract config values from assistant ===
     assistant_config = assistant.get("config", {}) if assistant else {}
     datetime_context = assistant_config.get("datetime_context", False)
@@ -204,41 +211,10 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         config=config,
     )
 
-    # # Initialize placeholders
-    # thinking_text = ""
-    
-    # # ✅ Extract thinking from standard content blocks
-    # if isinstance(response.content, list):
-    #     for block in response.content:
-    #         if isinstance(block, dict):
-    #             if block.get("type") == "thinking":
-    #                 thinking_text = block.get("thinking")
-    #             # Some versions use 'reasoning' type for cross-provider compatibility
-    #             elif block.get("type") == "reasoning":
-    #                 thinking_text = block.get("reasoning")
-
-    # # Log for debugging
-    # if thinking_text:
-    #     print(f"DEBUG - Claude is thinking: {thinking_text}")
-
     print(f"[chat_node] LLM response: {response}")
     # logging.info(f"[chat_node] LLM response: {response}")
     logging.info(f"[chat_node] LLM response received")
-
-    tool_calls = getattr(response, "tool_calls", [])
-    logging.info(f"[chat_node] Tool calls: {tool_calls}")
-
-    if tool_calls:
-        tool_call = tool_calls[0]
-        logging.info(f"[chat_node] First tool call: {tool_call.get('name')}")
-        # Only track A2A agent tool calls for approval workflow
-        if tool_call.get("name") == "send_message_to_a2a_agent":
-            state["current_tool_call"] = {
-                "name": tool_call.get("name"),
-                "args": tool_call.get("args"),
-                "status": "executing"
-            }
-            
+ 
     return {
         **state,
         "messages": [*state["messages"], response],

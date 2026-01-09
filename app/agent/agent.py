@@ -44,6 +44,7 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
 
     # Check if we have an approval response from the interrupt
     approval_response = state.get("approval_response")
+
     if approval_response:
         # Parse JSON string if needed
         if isinstance(approval_response, str):
@@ -69,20 +70,12 @@ async def async_tool_node(state: AgentState, config: RunnableConfig):
                 "current_tool_call": None  # Clear tool call state
             }
 
-        # User approved - continue with tool execution
-        state["approval_response"] = None
-
     # All tools (including A2A) use standard ToolNode
     tool_node = ToolNode(tools)
     result = await tool_node.ainvoke(state, config)
 
-    # Update state to show tool execution complete
-    result["current_tool_call"] = {
-        "name": tool_name,
-        "args": tool_args,
-        "status": "complete",
-        "result": result.get("messages", [])[-1].content if result.get("messages") else None
-    }
+    # Clear approval response
+    state["approval_response"] = None
 
     return result
 
@@ -110,7 +103,7 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
                 "tool_id": tool_call.get("id"),
                 "message": f"Do you want to execute {tool_call.get('name')}?"
             })
-
+            logger.info(f"[interrupt_node] approval_response: {approval_response}")
            
            # Store the approval response in state for async_tool_node to use
             if approval_response:
@@ -126,17 +119,14 @@ async def interrupt_node(state: AgentState, config: RunnableConfig):
                    approved = approval_response.get("approved", False)
                    action = approval_response.get("action", "").upper()
                    # Get current tool call info
-            
+
                    if not approved or action == "CANCEL":
                         logger.info(f"[interrupt_node] User denied tool execution or cancelled")
-
                         state["approval_response"] = approval_response
-                   else:   
-                        state["current_tool_call"] = {
-                            "name": tool_call.get("name"),
-                            "args": tool_call.get("args"),
-                            "status": "executing"
-                        }
+                   else:
+                        logger.info(f"[interrupt_node] User approved tool execution")
+                        # Store approval response for tool to access connection data
+                        state["approval_response"] = approval_response
 
     return state
 
@@ -181,6 +171,7 @@ async def route(state: AgentState, config: RunnableConfig):
             assistant_config = assistant.get("config", {}) if assistant else {}
 
             if assistant_config.get("ask_mode"):
+                logger.info(f"[route] Routing to interrupt_node for ask_mode")
                 return "interrupt_node"
 
             return "tools"

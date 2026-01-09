@@ -355,6 +355,7 @@ async def check_connections(runtime: ToolRuntime) -> str:
 @tool
 async def initiate_connection(
     server_url: str,
+    runtime: ToolRuntime,
     server_id: str = "",
     server_name: str = "",
     transport_type: str = "streamable_http",
@@ -372,7 +373,30 @@ async def initiate_connection(
         transport_type: Transport type (sse or streamable_http, default: streamable_http)
 
     Returns:
-        Empty string - result is populated from approval response
+        JSON data about the MCP server indicating that the connection has established if successful.
     """
-    # Tool is intentionally empty - result comes from interrupt approval
-    # return ""
+    # Safely get approval_response from runtime state
+    approval_response = None
+    if runtime.state and isinstance(runtime.state, dict):
+        logger.info(f"[initiate_connection] runtime.state: {runtime.state}")
+        approval_response = runtime.state.get("approval_response", {})
+
+    # If approval_response is still None or not a dict, use empty dict
+    if not approval_response or not isinstance(approval_response, dict):
+        approval_response = {}
+
+    status = "connected" if approval_response.get("connected", False) else "failed"
+    success = approval_response.get("connected", False)
+    message = "Connection established successfully." if success else "Connection failed or was not approved."
+    logger.info(f"[initiate_connection] connection state: {approval_response}")
+    # Prepare state for approval interrupt
+    return json.dumps({
+               "success": success,
+               "message": message,
+               "sessionId": approval_response.get("sessionId"),
+               "serverUrl": approval_response.get("serverUrl"),
+               "serverName": approval_response.get("serverName"),
+               "serverId": approval_response.get("serverId"),
+               "connected": approval_response.get("connected", False),
+               "status": status
+    });

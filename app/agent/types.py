@@ -9,11 +9,11 @@ class AgentState(MessagesState):
     # Original fields
     model: str
     status: Optional[str] = None
+    reasoning_content: Optional[str] = None
     sessionId: Optional[str] = None
     tool_calls: Optional[Any] = None
     assistant: Optional[Dict[str, Any]] = None
     approval_response: Optional[Dict[str, Any]] = None
-    current_tool_call: Optional[Dict[str, Any]] = None
 
     # MCP server configuration (populated by Next.js middleware)
     mcpConfig: Optional[Dict[str, Any]] = None
