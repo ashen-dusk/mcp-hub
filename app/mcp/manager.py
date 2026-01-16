@@ -146,63 +146,35 @@ class MCPServerManager:
         category_ids: Optional[List[str]] = None,
     ) -> MCPServer:
         """
-        Create or update an MCP server configuration.
-
-        Args:
-            name: Server name
-            transport: Transport type (stdio, sse, etc.)
-            owner: User who owns this server
-            id: Server ID (for updates)
-            url: Server URL (for network transports)
-            command: Command to execute (for stdio)
-            args: Command arguments
-            headers: HTTP headers
-            query_params: URL query parameters
-            requires_oauth2: Whether OAuth2 is required
-            is_public: Whether server is publicly available
-            description: Description of what this server does
-            category_ids: Optional list of category IDs to assign to this server
-
-        Returns:
-            Created or updated MCPServer instance
+        Update an existing MCP server by ID or create a new one.
         """
+
+        server_data = {
+            "name": name,
+            "owner": owner,
+            "transport": transport,
+            "url": url,
+            "command": command,
+            "args": args or {},
+            "headers": headers or {},
+            "query_params": query_params or {},
+            "enabled": True,
+            "requires_oauth2": requires_oauth2,
+            "is_public": is_public,
+            "description": description,
+        }
         # If ID is provided, update existing server by ID
         if id:
             try:
                 rec = await MCPServer.objects.aget(pk=id)
-                rec.name = name
-                rec.transport = transport
-                rec.url = url
-                rec.command = command
-                rec.args = args or {}
-                rec.headers = headers or {}
-                rec.query_params = query_params or {}
-                rec.enabled = True
-                rec.requires_oauth2 = requires_oauth2
-                rec.is_public = is_public
-                rec.description = description
+                # Apply all attributes to the existing record
+                for key, value in server_data.items():
+                    setattr(rec, key, value)
                 await rec.asave()
             except MCPServer.DoesNotExist:
                 raise ValueError(f"Server with ID '{id}' does not exist")
         else:
-            # Create or update by name+owner (original behavior)
-            defaults = {
-                "transport": transport,
-                "url": url,
-                "command": command,
-                "args": args or {},
-                "headers": headers or {},
-                "query_params": query_params or {},
-                "enabled": True,
-                "requires_oauth2": requires_oauth2,
-                "is_public": is_public,
-                "description": description,
-            }
-            rec, _ = await MCPServer.objects.aupdate_or_create(
-                name=name,
-                owner=owner,
-                defaults=defaults,
-            )
+            rec = await MCPServer.objects.acreate(**server_data)
 
         # Handle categories assignment (ManyToMany field must be set after save)
         if category_ids is not None:
