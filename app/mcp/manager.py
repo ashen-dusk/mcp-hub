@@ -134,6 +134,7 @@ class MCPServerManager:
         name: str,
         transport: str,
         owner: User,
+        id: Optional[str] = None,
         url: Optional[str] = None,
         command: Optional[str] = None,
         args: Optional[dict] = None,
@@ -151,6 +152,7 @@ class MCPServerManager:
             name: Server name
             transport: Transport type (stdio, sse, etc.)
             owner: User who owns this server
+            id: Server ID (for updates)
             url: Server URL (for network transports)
             command: Command to execute (for stdio)
             args: Command arguments
@@ -164,23 +166,43 @@ class MCPServerManager:
         Returns:
             Created or updated MCPServer instance
         """
-        defaults = {
-            "transport": transport,
-            "url": url,
-            "command": command,
-            "args": args or {},
-            "headers": headers or {},
-            "query_params": query_params or {},
-            "enabled": True,
-            "requires_oauth2": requires_oauth2,
-            "is_public": is_public,
-            "description": description,
-        }
-        rec, _ = await MCPServer.objects.aupdate_or_create(
-            name=name,
-            owner=owner,
-            defaults=defaults,
-        )
+        # If ID is provided, update existing server by ID
+        if id:
+            try:
+                rec = await MCPServer.objects.aget(pk=id)
+                rec.name = name
+                rec.transport = transport
+                rec.url = url
+                rec.command = command
+                rec.args = args or {}
+                rec.headers = headers or {}
+                rec.query_params = query_params or {}
+                rec.enabled = True
+                rec.requires_oauth2 = requires_oauth2
+                rec.is_public = is_public
+                rec.description = description
+                await rec.asave()
+            except MCPServer.DoesNotExist:
+                raise ValueError(f"Server with ID '{id}' does not exist")
+        else:
+            # Create or update by name+owner (original behavior)
+            defaults = {
+                "transport": transport,
+                "url": url,
+                "command": command,
+                "args": args or {},
+                "headers": headers or {},
+                "query_params": query_params or {},
+                "enabled": True,
+                "requires_oauth2": requires_oauth2,
+                "is_public": is_public,
+                "description": description,
+            }
+            rec, _ = await MCPServer.objects.aupdate_or_create(
+                name=name,
+                owner=owner,
+                defaults=defaults,
+            )
 
         # Handle categories assignment (ManyToMany field must be set after save)
         if category_ids is not None:
