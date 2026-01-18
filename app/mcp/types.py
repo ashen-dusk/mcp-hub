@@ -54,6 +54,7 @@ class ToolInfo:
 class MCPServerFilter:
     id: auto
     name: auto
+    description: auto
     transport: auto
     enabled: auto
     requires_oauth2: auto

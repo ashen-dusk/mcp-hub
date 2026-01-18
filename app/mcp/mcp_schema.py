@@ -59,7 +59,7 @@ def _get_user_context(info: Info) -> str:
 class Query:
 
     @strawberry_django.connection(DjangoListConnection[MCPServerType], filters=MCPServerFilter, order=MCPServerOrder)
-    def mcp_servers(self) -> List[MCPServer]:
+    def mcp_servers(self, search: Optional[str] = None) -> List[MCPServer]:
         """
         Get all public MCP servers with user/session-specific connection states.
 
@@ -67,8 +67,21 @@ class Query:
         The decorator applies filters and order to the base queryset before pagination.
         Connection status and tools are fetched from Redis at the field level.
         Returns a connection with edges, pageInfo, and optional totalCount.
+
+        Custom search parameter: searches across name OR description fields with OR logic.
         """
-        return MCPServer.objects.filter(is_public=True)
+        from django.db.models import Q
+
+        queryset = MCPServer.objects.filter(is_public=True)
+
+        # Apply custom search across name OR description if provided
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(description__icontains=search)
+            )
+
+        return queryset
 
     @strawberry_django.field(permission_classes=[IsAuthenticated])
     def get_user_mcp_servers(self, info: Info) -> List[MCPServerType]:
