@@ -17,6 +17,9 @@ class AgentState(MessagesState):
 
     # MCP server configuration (populated by Next.js middleware)
     mcpConfig: Optional[Dict[str, Any]] = None
+    # LLM configuration (llm_provider, llm_api_key)
+    llm_config: Optional[Dict[str, Any]] = None
+    
     # Selected tool names to filter
     selectedTools: Optional[List[str]] = None
     # LLM provider configuration

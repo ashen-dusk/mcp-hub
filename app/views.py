@@ -225,16 +225,16 @@ async def agui_langgraph_handler(request):
         body = json.loads(body_bytes.decode('utf-8'))
         encoder = EventEncoder()
 
-        if not request.user.is_authenticated:
-            # Create input with user_id
-            return JsonResponse({
-                "error": "Unauthorized!"
-            }, status=401)
+        # if not request.user.is_authenticated:
+        #     # Create input with user_id
+        #     return JsonResponse({
+        #         "error": "Unauthorized!"
+        #     }, status=401)
         
         # Inject user_id into state
         if "state" not in body:
             body["state"] = {}
-        body["state"]["user_id"] = request.user.id        
+        # body["state"]["user_id"] = request.user.id        
         input_data = RunAgentInput(**body)
 
             

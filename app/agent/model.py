@@ -27,9 +27,10 @@ def get_llm(state: AgentState) -> BaseChatModel:
     temperature = assistant_config.get("temperature", 0)  # default 0
     max_tokens = assistant_config.get("max_tokens")  # can be None
 
-    # Get LLM provider and API key from assistant_config
-    llm_provider = assistant_config.get("llm_provider")
-    llm_api_key = assistant_config.get("llm_api_key")
+    # Get LLM provider and API key from state or assistant_config
+    llm_config = state.get("llm_config", {}) or {}
+    llm_provider = llm_config.get("llm_provider") or assistant_config.get("llm_provider")
+    llm_api_key = llm_config.get("llm_api_key") or assistant_config.get("llm_api_key")
     llm_name = assistant_config.get("llm_name")
     effective_model = llm_name or model_name
 
