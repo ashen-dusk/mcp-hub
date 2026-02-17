@@ -109,7 +109,6 @@ def get_llm(state: AgentState) -> BaseChatModel:
         "streaming": True,
         "use_responses_api": True,
         "output_version": "responses/v1",
-        "reasoning_effort": "low",
     }
     if max_tokens is not None:
         model_kwargs["max_tokens"] = max_tokens
