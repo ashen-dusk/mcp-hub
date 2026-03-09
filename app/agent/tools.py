@@ -149,30 +149,41 @@ async def add_mcp_server(
         return json.dumps({"error": str(e)})
 
 @tool
-async def delete_mcp_server(name: str, runtime: ToolRuntime) -> str:
+async def delete_mcp_server(runtime: ToolRuntime, server_id: str = "", name: str = "") -> str:
     """
-    Delete an MCP server by name.
+    Delete an MCP server by ID (preferred) or by name.
     
     Args:
-        name: Name of the server to delete
         runtime: ToolRuntime to access state
+        server_id: ID of the server to delete (preferred)
+        name: Name of the server to delete (fallback)
     """
     try:
         user_id = runtime.state.get("user_id")
         if not user_id:
             return json.dumps({"error": "Authentication required"})
+        if not server_id and not name:
+            return json.dumps({"error": "Either server_id or name is required"})
 
-        # Find server owned by user
+        # Find server owned by user (ID preferred).
         try:
-            server = await MCPServer.objects.aget(name=name, owner_id=user_id)
+            if server_id:
+                server = await MCPServer.objects.aget(pk=server_id, owner_id=user_id)
+            else:
+                server = await MCPServer.objects.aget(name=name, owner_id=user_id)
         except MCPServer.DoesNotExist:
-            return json.dumps({"error": f"Server '{name}' not found or permission denied"})
+            lookup_value = server_id or name
+            lookup_field = "id" if server_id else "name"
+            return json.dumps({"error": f"Server with {lookup_field} '{lookup_value}' not found or permission denied"})
             
+        deleted_server_id = str(server.id)
+        deleted_server_name = server.name
         await server.adelete()
         return json.dumps({
             "success": True,
-            "message": f"Successfully deleted MCP server '{name}'",
-            "name": name
+            "message": f"Successfully deleted MCP server '{deleted_server_name}'",
+            "id": deleted_server_id,
+            "name": deleted_server_name
         })
         
     except Exception as e:
@@ -216,6 +227,7 @@ async def list_mcp_servers(runtime: ToolRuntime, page: int = 1, page_size: int =
         servers = []
         async for server in qs[start:end]:
             servers.append({
+                "id": server.id,
                 "name": server.name,
                 "transport": server.transport,
                 "url": server.url,

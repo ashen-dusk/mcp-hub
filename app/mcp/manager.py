@@ -200,21 +200,31 @@ class MCPServerManager:
         return rec
 
     async def aremove_server(
-        self, name: str, user: User, session_id: Optional[str] = None
+        self,
+        user: User,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> bool:
         """
-        Remove an MCP server and clean up OAuth tokens.
+        Remove an MCP server by ID (preferred) or by name and clean up OAuth tokens.
 
         Args:
-            name: Server name
             user: User who owns the server
+            id: Server ID (preferred)
+            name: Server name (fallback for backward compatibility)
             session_id: Session identifier
 
         Returns:
             True if server was deleted, False otherwise
         """
         try:
-            rec = await MCPServer.objects.filter(name=name, owner=user).afirst()
+            if id:
+                rec = await MCPServer.objects.filter(pk=id, owner=user).afirst()
+            elif name:
+                rec = await MCPServer.objects.filter(name=name, owner=user).afirst()
+            else:
+                return False
 
             if not rec:
                 return False
@@ -229,12 +239,12 @@ class MCPServerManager:
                     )
                     storage.clear()
                 except Exception as e:
-                    logging.warning(f"Failed to clear tokens for {name}: {e}")
+                    logging.warning(f"Failed to clear tokens for {rec.name}: {e}")
 
             await rec.adelete()
 
             # Clear from server configs
-            self.server_configs.pop(name, None)
+            self.server_configs.pop(rec.name, None)
 
             await self.initialize_client()
             return True

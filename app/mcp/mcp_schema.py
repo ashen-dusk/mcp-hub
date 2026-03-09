@@ -115,9 +115,14 @@ class Mutation:
         )
         
     @strawberry.mutation(permission_classes=[IsAuthenticated])
-    async def remove_mcp_server(self, info: Info, name: str) -> bool:
+    async def remove_mcp_server(
+        self,
+        info: Info,
+        id: Optional[str] = None,
+        name: Optional[str] = None
+    ) -> bool:
         user = info.context.request.user
-        return await mcp.aremove_server(name, user=user)
+        return await mcp.aremove_server(user=user, id=id, name=name)
 
     @strawberry.mutation
     async def set_mcp_server_enabled(self, info: Info, name: str, enabled: bool) -> MCPServerType:
